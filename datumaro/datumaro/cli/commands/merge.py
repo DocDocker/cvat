@@ -33,8 +33,6 @@ def build_parser(parser_ctor=argparse.ArgumentParser):
         help="Path to a project (repeatable)")
     parser.add_argument('-iou', '--iou-thresh', default=0.25, type=float,
         help="IoU match threshold for segments (default: %(default)s)")
-    parser.add_argument('-nms', action='store_true',
-        help="Run non-maxima suppression algorithm prior to merging")
     parser.add_argument('-iconf', '--input-conf-thresh',
         default=0.25, type=float,
         help="Confidence threshold for input "
@@ -72,8 +70,7 @@ def merge_command(args):
 
     merged_dataset = IntersectMerge.merge(source_datasets,
         pairwise_dist=args.iou_thresh, input_conf_thresh=args.input_conf_thresh,
-        output_conf_thresh=args.output_conf_thresh,
-        quorum=args.quorum, do_nms=args.nms)
+        output_conf_thresh=args.output_conf_thresh, quorum=args.quorum)
 
     merged_project = Project()
     output_dataset = merged_project.make_dataset()
