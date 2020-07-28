@@ -107,31 +107,33 @@ def match_items(datasets):
     return matches, item_map, dataset_map
 
 def match_annotations(sources, config=None):
+    config = Config(config)
+
     def _match_type(t, anns):
         def _match(c):
             s = c(**{k: v for k, v in config.items() if k in c.CONFIG_SCHEMA})
             return s.match_annotations(anns)
 
         if t is AnnotationType.label:
-            return _match(LabelMergingStrategy)
+            return _match(LabelMatcher)
         elif t is AnnotationType.bbox:
-            return _match(BboxMergingStrategy)
+            return _match(BboxMatcher)
         elif t is AnnotationType.mask:
-            return _match(MaskMergingStrategy)
+            return _match(MaskMatcher)
         elif t is AnnotationType.polygon:
-            return _match(PolygonMergingStrategy)
+            return _match(PolygonMatcher)
         elif t is AnnotationType.polyline:
-            return _match(LineMergingStrategy)
+            return _match(LineMatcher)
         elif t is AnnotationType.points:
-            return _match(PointsMergingStrategy)
+            return _match(PointsMatcher)
         elif t is AnnotationType.caption:
             return reduce(merge_annotations_unique, ann, [])
         else:
             raise NotImplementedError("Merge for %s type is not supported" % t)
 
-    ann_map = { id(a): (a, id(s)) for s in sources for a in s }
+    config.ann_map = { id(a): (a, id(s)) for s in sources for a in s }
 
-    instance_map = {}
+    config.instance_map = {}
     for s in sources:
         s_instances = find_instances(s)
         for inst in s_instances:
@@ -165,10 +167,7 @@ class IntersectMerge(MergingStrategy):
         .add('output_conf_thresh', float) \
         .add('quorum', int) \
         .add('ignored_attributes', set) \
-        .add('metric', str) \
-        .add('pdj_radius', float) \
-        .add('pdj_ratio', float) \
-        .add('oks_sigma', list) \
+        .add('sigma', list) \
         \
         .add('check_quality', bool) \
         .add('close_clusters_dist', float) \
@@ -178,9 +177,7 @@ class IntersectMerge(MergingStrategy):
         .build()
 
     CONFIG_DEFAULTS = Config({
-        'metric': 'OKS',
-        'pdj_ratio': 0.05,
-        'oks_sigma': [],
+        'sigma': [],
         'close_clusters_dist': 0.5,
     })
 
@@ -197,7 +194,9 @@ class IntersectMerge(MergingStrategy):
         self._dataset_map = dataset_map
 
         for (item_id, item_subset), items in item_matches.items():
-            anno_matches, anno_map = self.match_annotations(items)
+            if len(items) < len(datasets):
+                missing_sources = set(range(len(sources))) - set(id_segm[id(a)][1] for a in cluster)
+                warn("Item '%s' is not found in sources: %s")
             merged.put(self.merge_items(items))
         return merged
 
@@ -225,31 +224,7 @@ class IntersectMerge(MergingStrategy):
         return items[0].wrap(annotations=annotations)
 
     def merge_annotations(self, sources):
-        self._id_segm = { id(sgm): (sgm, src_i)
-            for src_i, src in enumerate(sources) for sgm in src }
-
-        self._instance_map = {}
-        for s in sources:
-            s_instances = find_instances(s)
-            for inst in s_instances:
-                inst_bbox = max_bbox(inst)
-                for ann in inst:
-                    self._instance_map[id(ann)] = [inst, inst_bbox]
-
-        all_by_type = {}
-        for s in sources:
-            src_by_type = {}
-            for a in s:
-                src_by_type.setdefault(a.type, []).append(a)
-            for k, v in src_by_type.items():
-                all_by_type.setdefault(k, []).append(v)
-
-        mergers = {}
-        clusters = {}
-        for k, v in all_by_type.items():
-            m = self._make_ann_merger(k)
-            mergers[k] = m
-            clusters.setdefault(k, []).extend(m.match_annotations(v))
+        clusters = match_annotations(sources, self._conf)
 
         joined_clusters = sum(clusters.values(), [])
         group_map = self._find_cluster_groups(joined_clusters)
@@ -263,7 +238,21 @@ class IntersectMerge(MergingStrategy):
                         warn("Item '%s': annotation %s has no matching annotation in some sources: %s",
                             self._item.id, cluster[0], missing_sources)
 
-            merged_clusters = mergers[k].merge_clusters(clusters, group_map)
+            merged_clusters = mergers[k].merge_clusters(clusters)
+
+            for merged_ann, cluster in zip(merged_clusters, clusters):
+                attributes = self.find_cluster_attrs(cluster)
+                attributes = { k: v for k, v in attributes.items()
+                    if k not in self.ignored_attributes }
+                merged_ann.attributes = attributes.update(merged_ann.attributes)
+
+                new_group_id, (_, cluster_groups) = find(enumerate(group_map),
+                    lambda e: id(cluster) in e[1][0])
+                if not cluster_groups or cluster_groups == {0}:
+                    new_group_id = 0
+                else:
+                    new_group_id += 1
+                merged_ann.group = new_group_id
 
             if self.close_clusters_dist:
                 close = []
@@ -287,12 +276,10 @@ class IntersectMerge(MergingStrategy):
         def _make(c):
             s = c(**{k: v for k, v in self._conf.items() if k in c.CONFIG_SCHEMA})
             s._image = self._image
-            s._instance_map = self._instance_map
-            s._id_segm = self._id_segm
             return s
 
         if t is AnnotationType.label:
-            return _make(LabelMergingStrategy)
+            return _make(LabelMerger)
         elif t is AnnotationType.bbox:
             return _make(BboxMergingStrategy)
         elif t is AnnotationType.mask:
@@ -338,15 +325,38 @@ class IntersectMerge(MergingStrategy):
             cluster_groups.append( (cluster_group, a_groups) )
         return cluster_groups
 
-class TypedAnnotationMatcher(Configurable):
+    def _find_cluster_attrs(self, cluster):
+        quorum = self.quorum or 0
+
+        # TODO: when attribute types are implemented, add linear
+        # interpolation for contiguous values
+
+        attr_votes = {} # name -> { value: score , ... }
+        for s in cluster:
+            for name, value in s.attributes.items():
+                votes = attr_votes.get(name, {})
+                votes[value] = 1.0 + votes.get(value, 0.0)
+                attr_votes[name] = votes
+
+        attributes = {}
+        for name, votes in attr_votes.items():
+            vote, count = max(votes.items(), key=lambda e: e[1])
+            if count < quorum:
+                warn("Item '%s': annotation %s failed to ")
+                continue
+            attributes[name] = vote
+
+        return attributes
+
+class AnnotationMatcher(Configurable):
     def match_annotations(self, sources):
         raise NotImplementedError()
 
-class LabelMatcher(TypedAnnotationMatcher):
+class LabelMatcher(AnnotationMatcher):
     def match_annotations(self, sources):
         return sum(sources)
 
-class _ShapeMatcher(TypedAnnotationMatcher):
+class _ShapeMatcher(AnnotationMatcher):
     CONFIG_SCHEMA = SchemaBuilder() \
         .add('pairwise_dist', float) \
         .add('cluster_dist', float) \
@@ -447,6 +457,87 @@ class _ShapeMatcher(TypedAnnotationMatcher):
     def distance(a, b):
         return segment_iou(a, b)
 
+class BboxMatcher(_ShapeMatcher):
+    pass
+
+    # def match_annotations(self, sources):
+    #     clusters, id_segm = super().match_annotations(sources)
+
+    #     # debugging code
+    #     # import datumaro.util.mask_tools as mask_tools
+    #     # cm = mask_tools.generate_colormap()
+    #     # for c_id, cluster in enumerate(clusters):
+    #     #     color = tuple(map(int, cm[1 + c_id][::-1]))
+    #     #     for segm in cluster:
+    #     #         _, src_id = id_segm[id(segm)]
+    #     #         cv2.rectangle(self._image, (int(segm.x), int(segm.y)),
+    #     #             ((int(segm.points[2]), int(segm.points[3]))), color,
+    #     #             thickness=2)
+    #     #         cv2.putText(self._image, '(c%s,s%s)' % (c_id, src_id),
+    #     #             (int(segm.x) + 1, int(segm.y) + 1),
+    #     #             cv2.FONT_HERSHEY_COMPLEX, 0.5, (255, 255, 255))
+    #     #         cv2.putText(self._image, '(c%s,s%s)' % (c_id, src_id),
+    #     #             (int(segm.x), int(segm.y)),
+    #     #             cv2.FONT_HERSHEY_COMPLEX, 0.5, color)
+
+    #     return clusters, id_segm
+
+
+class PolygonMatcher(_ShapeMatcher):
+    pass
+
+    # def match_annotations(self, sources):
+    #     clusters, id_segm = super().match_annotations(sources)
+
+    #     # debugging code
+    #     import datumaro.util.mask_tools as mask_tools
+    #     cm = mask_tools.generate_colormap()
+    #     for c_id, cluster in enumerate(clusters):
+    #         color = tuple(map(int, cm[1 + c_id][::-1]))
+    #         for segm in cluster:
+    #             _, src_id = id_segm[id(segm)]
+    #             pts = np.array(segm.points).reshape((-1, 2))
+    #             for p1, p2 in pairs(pts):
+    #                 cv2.circle(self._image, (int(p1[0]), int(p1[1])), 1, color,
+    #                     thickness=2)
+    #                 cv2.line(self._image, (int(p1[0]), int(p1[1])),
+    #                     (int(p2[0]), int(p2[1])), color, thickness=2)
+    #             bbox = segm.get_bbox()
+    #             cv2.putText(self._image, '(c%s,s%s)' % (c_id, src_id),
+    #                 (int(bbox[0]) + 1, int(bbox[1]) + 1),
+    #                 cv2.FONT_HERSHEY_COMPLEX, 0.5, (255, 255, 255))
+    #             cv2.putText(self._image, '(c%s,s%s)' % (c_id, src_id),
+    #                 (int(bbox[0]), int(bbox[1])),
+    #                 cv2.FONT_HERSHEY_COMPLEX, 0.5, color)
+
+    #     return clusters, id_segm
+
+class MaskMatcher(_ShapeMatcher):
+    pass
+
+    # def match_annotations(self, sources):
+    #     clusters, id_segm = super().match_annotations(sources)
+
+    #     # debugging code
+    #     import datumaro.util.mask_tools as mask_tools
+    #     cm = mask_tools.generate_colormap()
+    #     for c_id, cluster in enumerate(clusters):
+    #         color = tuple(map(int, cm[1 + c_id][::-1]))
+    #         for segm in cluster:
+    #             _, src_id = id_segm[id(segm)]
+    #             for p in np.array(segm.points).reshape((-1, 2)):
+    #                 cv2.circle(self._image, (int(p[0]), int(p[1])), 1, color,
+    #                     thickness=2)
+    #             bbox = segm.get_bbox()
+    #             cv2.putText(self._image, '(c%s,s%s)' % (c_id, src_id),
+    #                 (int(bbox[0]) + 1, int(bbox[1]) + 1),
+    #                 cv2.FONT_HERSHEY_COMPLEX, 0.5, (255, 255, 255))
+    #             cv2.putText(self._image, '(c%s,s%s)' % (c_id, src_id),
+    #                 (int(bbox[0]), int(bbox[1])),
+    #                 cv2.FONT_HERSHEY_COMPLEX, 0.5, color)
+
+    #     return clusters, id_segm
+
 class PointsMatcher(_ShapeMatcher):
     CONFIG_SCHEMA = SchemaBuilder(fallback=_ShapeMatcher.CONFIG_SCHEMA) \
         .add('sigma', list) \
@@ -523,35 +614,15 @@ class LineMatcher(_ShapeMatcher):
     #     return clusters, id_segm
 
 
-class TypedMergingStrategy(Configurable):
+class AnnotationMerger(Configurable):
+    def merge_clusters(self, clusters):
+        raise NotImplementedError()
+
+class LabelMerger(AnnotationMerger):
     CONFIG_SCHEMA = SchemaBuilder() \
         .add('quorum', int) \
         .build()
 
-    def find_cluster_attrs(self, cluster):
-        quorum = self.quorum or 0
-
-        # TODO: when attribute types are implemented, add linear
-        # interpolation for contiguous values
-
-        attr_votes = {} # name -> { value: score , ... }
-        for s in cluster:
-            for name, value in s.attributes.items():
-                votes = attr_votes.get(name, {})
-                votes[value] = 1.0 + votes.get(value, 0.0)
-                attr_votes[name] = votes
-
-        attributes = {}
-        for name, votes in attr_votes.items():
-            vote, count = max(votes.items(), key=lambda e: e[1])
-            if count < quorum:
-                warn("Item '%s': annotation %s failed to ")
-                continue
-            attributes[name] = vote
-
-        return attributes
-
-class LabelMergingStrategy(TypedMergingStrategy):
     def merge_clusters(self, clusters):
         votes = {} # label -> score
         for s in chain(*clusters):
@@ -563,37 +634,27 @@ class LabelMergingStrategy(TypedMergingStrategy):
             votes_count, label = max(votes.items(), key=lambda e: e[1])
             if self.quorum <= votes_count:
                 labels[name] = label
+            else:
+                warn("Item '%s': too few votes for label '%s'"
+                    " - %s of %s required" % \
+                    (self._item.id, label, votes_count, self.quorum))
 
         return labels
 
-class ShapeMergingStrategy(TypedMergingStrategy):
-    CONFIG_SCHEMA = SchemaBuilder(fallback=TypedMergingStrategy.CONFIG_SCHEMA) \
-        .add('ignored_attributes', set) \
+class _ShapeMerger(AnnotationMerger):
+    CONFIG_SCHEMA = SchemaBuilder() \
+        .add('quorum', int) \
         .build()
 
-    def merge_clusters(self, clusters, groups):
+    def merge_clusters(self, clusters):
         merged = []
         for cluster in clusters:
             label, label_score = self.find_cluster_label(cluster)
             shape, shape_score = self.merge_cluster_shape(cluster)
 
-            attributes = self.find_cluster_attrs(cluster)
-            attributes = { k: v for k, v in attributes.items()
-                if k not in self.ignored_attributes }
-
-            attributes['score'] = label_score * shape_score \
-                if label is not None else shape_score
-
-            new_group_id, (_, cluster_groups) = find(enumerate(groups),
-                lambda e: id(cluster) in e[1][0])
-            if not cluster_groups or cluster_groups == {0}:
-                new_group_id = 0
-            else:
-                new_group_id += 1
-
             shape.label = label
-            shape.group = new_group_id
-            shape.attributes.update(attributes)
+            shape.attributes['score'] = label_score * shape_score \
+                if label is not None else shape_score
 
             # debugging code
             bbox = shape.get_bbox()
@@ -638,82 +699,20 @@ class ShapeMergingStrategy(TypedMergingStrategy):
             for s in cluster) / len(cluster)
         return shape, shape_score
 
-class BboxMergingStrategy(ShapeMergingStrategy):
+class BboxMerger(_ShapeMerger):
     pass
-    # def match_annotations(self, sources):
-    #     clusters, id_segm = super().match_annotations(sources)
 
-    #     # debugging code
-    #     # import datumaro.util.mask_tools as mask_tools
-    #     # cm = mask_tools.generate_colormap()
-    #     # for c_id, cluster in enumerate(clusters):
-    #     #     color = tuple(map(int, cm[1 + c_id][::-1]))
-    #     #     for segm in cluster:
-    #     #         _, src_id = id_segm[id(segm)]
-    #     #         cv2.rectangle(self._image, (int(segm.x), int(segm.y)),
-    #     #             ((int(segm.points[2]), int(segm.points[3]))), color,
-    #     #             thickness=2)
-    #     #         cv2.putText(self._image, '(c%s,s%s)' % (c_id, src_id),
-    #     #             (int(segm.x) + 1, int(segm.y) + 1),
-    #     #             cv2.FONT_HERSHEY_COMPLEX, 0.5, (255, 255, 255))
-    #     #         cv2.putText(self._image, '(c%s,s%s)' % (c_id, src_id),
-    #     #             (int(segm.x), int(segm.y)),
-    #     #             cv2.FONT_HERSHEY_COMPLEX, 0.5, color)
-
-    #     return clusters, id_segm
-
-class PolygonMergingStrategy(ShapeMergingStrategy):
+class PolygonMerger(_ShapeMerger):
     pass
-    # def match_annotations(self, sources):
-    #     clusters, id_segm = super().match_annotations(sources)
 
-    #     # debugging code
-    #     import datumaro.util.mask_tools as mask_tools
-    #     cm = mask_tools.generate_colormap()
-    #     for c_id, cluster in enumerate(clusters):
-    #         color = tuple(map(int, cm[1 + c_id][::-1]))
-    #         for segm in cluster:
-    #             _, src_id = id_segm[id(segm)]
-    #             pts = np.array(segm.points).reshape((-1, 2))
-    #             for p1, p2 in pairs(pts):
-    #                 cv2.circle(self._image, (int(p1[0]), int(p1[1])), 1, color,
-    #                     thickness=2)
-    #                 cv2.line(self._image, (int(p1[0]), int(p1[1])),
-    #                     (int(p2[0]), int(p2[1])), color, thickness=2)
-    #             bbox = segm.get_bbox()
-    #             cv2.putText(self._image, '(c%s,s%s)' % (c_id, src_id),
-    #                 (int(bbox[0]) + 1, int(bbox[1]) + 1),
-    #                 cv2.FONT_HERSHEY_COMPLEX, 0.5, (255, 255, 255))
-    #             cv2.putText(self._image, '(c%s,s%s)' % (c_id, src_id),
-    #                 (int(bbox[0]), int(bbox[1])),
-    #                 cv2.FONT_HERSHEY_COMPLEX, 0.5, color)
-
-    #     return clusters, id_segm
-
-class MaskMergingStrategy(ShapeMergingStrategy):
+class MaskMerger(_ShapeMerger):
     pass
-    # def match_annotations(self, sources):
-    #     clusters, id_segm = super().match_annotations(sources)
 
-    #     # debugging code
-    #     import datumaro.util.mask_tools as mask_tools
-    #     cm = mask_tools.generate_colormap()
-    #     for c_id, cluster in enumerate(clusters):
-    #         color = tuple(map(int, cm[1 + c_id][::-1]))
-    #         for segm in cluster:
-    #             _, src_id = id_segm[id(segm)]
-    #             for p in np.array(segm.points).reshape((-1, 2)):
-    #                 cv2.circle(self._image, (int(p[0]), int(p[1])), 1, color,
-    #                     thickness=2)
-    #             bbox = segm.get_bbox()
-    #             cv2.putText(self._image, '(c%s,s%s)' % (c_id, src_id),
-    #                 (int(bbox[0]) + 1, int(bbox[1]) + 1),
-    #                 cv2.FONT_HERSHEY_COMPLEX, 0.5, (255, 255, 255))
-    #             cv2.putText(self._image, '(c%s,s%s)' % (c_id, src_id),
-    #                 (int(bbox[0]), int(bbox[1])),
-    #                 cv2.FONT_HERSHEY_COMPLEX, 0.5, color)
+class PointsMerger(_ShapeMerger):
+    pass
 
-    #     return clusters, id_segm
+class LineMerger(_ShapeMerger):
+    pass
 
 def smooth_line(points, segments):
     assert 2 <= len(points) // 2 and len(points) % 2 == 0
