@@ -4,7 +4,6 @@
 # SPDX-License-Identifier: MIT
 
 from collections import OrderedDict
-from enum import Enum
 import logging as log
 from functools import reduce
 from itertools import chain, zip_longest
@@ -17,8 +16,9 @@ from datumaro.components.cli_plugin import CliPlugin
 from datumaro.components.config import Config, SchemaBuilder
 from datumaro.components.extractor import AnnotationType, Bbox, LabelCategories
 from datumaro.components.project import Dataset
-from datumaro.util import find, pairs
-from datumaro.util.annotation_util import segment_iou, bbox_iou, mean_bbox, OKS, PDJ, find_instances, max_bbox
+from datumaro.util import find
+from datumaro.util.annotation_util import (segment_iou, bbox_iou,
+    mean_bbox, OKS, find_instances, max_bbox)
 
 SEGMENT_TYPES = {
     AnnotationType.bbox,
@@ -85,6 +85,41 @@ class MergingStrategy(CliPlugin, Configurable):
     def __call__(self, sources):
         raise NotImplementedError()
 
+class MergeError:
+    def __repr__(self):
+        return str(vars(self))
+
+class TooCloseError(MergeError):
+    def __init__(self, item_id, a, b, distance):
+        self.a = a
+        self.b = b
+        self.distance = distance
+        self.item_id = item_id
+
+class NoMatchingAnnError(MergeError):
+    def __init__(self, item_id, ann, sources=None):
+        self.ann = ann
+        self.sources = sources
+        self.item_id = item_id
+
+class NoMatchingItemError(MergeError):
+    def __init__(self, item_id, sources=None):
+        self.sources = sources
+        self.item_id = item_id
+
+class FailedLabelVotingError(MergeError):
+    def __init__(self, item_id, ann, votes, sources=None):
+        self.sources = sources
+        self.item_id = item_id
+        self.ann = ann
+        self.votes = votes
+
+class FailedAttrVotingError(MergeError):
+    def __init__(self, item_id, ann, votes, sources=None):
+        self.sources = sources
+        self.item_id = item_id
+        self.ann = ann
+        self.votes = votes
 
 def match_items(datasets):
     item_ids = set((item.id, item.subset) for d in datasets for item in d)
@@ -125,10 +160,8 @@ def match_annotations(sources, config=None):
             return _match(LineMatcher)
         elif t is AnnotationType.points:
             return _match(PointsMatcher)
-        elif t is AnnotationType.caption:
-            return reduce(merge_annotations_unique, ann, [])
         else:
-            raise NotImplementedError("Merge for %s type is not supported" % t)
+            raise NotImplementedError("Matching for %s type is not supported" % t)
 
     instance_map = {}
     for s in sources:
@@ -171,13 +204,13 @@ class IntersectMerge(MergingStrategy):
         .add('check_quality', bool) \
         .add('close_clusters_dist', float) \
         .add('check_anno_presence', bool) \
-        .add('check_groups', bool) \
-        .add('groups', list) \
+        .add('check_groups', list) \
         .build()
 
     CONFIG_DEFAULTS = Config({
         'sigma': [],
         'close_clusters_dist': 0.75,
+        'check_anno_presence': False,
     })
 
     _image = None # TODO: remove after debug
@@ -207,25 +240,25 @@ class IntersectMerge(MergingStrategy):
             if len(items) < len(datasets):
                 missing_sources = set(id(s) for s in sources) - \
                     set(item_map[id(i)][1] for i in items)
-                warn("Item %s is not found in sources: %s" % \
-                    (item_id, [self._dataset_map[s][1] for s in missing_sources])
-                )
+
+                self._add_item_error(NoMatchingItemError,
+                    item_id, missing_sources)
                 for s in missing_sources:
-                    self._source_errors[s][item_id] = self.NO_ITEM
-                self._add_item_error()
+                    self._add_source_error(s, NoMatchingItemError)
             merged.put(self.merge_items(items))
 
         print(self._source_errors)
         print(self._item_errors)
         return merged
 
-    def _add_item_error(self):
-        self._item_errors[self._item_id] = \
-            self._item_errors.get(self._item_id, 0) + 1
+    def _add_item_error(self, error, *args, **kwargs):
+        self._item_errors.setdefault(self._item_id, []).append(
+            error(self._item_id, *args, **kwargs))
 
-    def _add_source_error(self, source_id):
-        self._source_errors[source_id][self._item_id] = \
-            self._source_errors[source_id].get(self._item_id, 0) + 1
+    def _add_source_error(self, source_id, error, *args, **kwargs):
+        self._source_errors[source_id] \
+            .setdefault(self._item_id, []).append(
+                error(self._item_id, *args, **kwargs))
 
     def _get_ann_source(self, ann_id):
         return self._item_map[self._ann_map[ann_id][1]][1]
@@ -244,7 +277,8 @@ class IntersectMerge(MergingStrategy):
                 if self.input_conf_thresh <= a.attributes.get('score', 1)
             ]
             sources.append(anns)
-        print(self._item.id, list(map(len, sources)))
+        log.debug("Merging item %s: source annotations %s" % \
+            (self._item.id, list(map(len, sources))))
 
         annotations = self.merge_annotations(sources)
 
@@ -272,14 +306,11 @@ class IntersectMerge(MergingStrategy):
                     if len(cluster) != len(sources):
                         missing_sources = set(self._dataset_map) - \
                             set(self._get_ann_source(id(a)) for a in cluster)
-                        warn("Item %s: annotation %s has no matching "
-                            "annotation in some sources: %s" % \
-                            (self._item_id, cluster[0],
-                                [self._dataset_map[s][1] for s in missing_sources])
-                        )
                         for s in missing_sources:
-                            self._add_source_error(s)
-                        self._add_item_error()
+                            self._add_source_error(s,
+                                NoMatchingAnnError, cluster[0])
+                        self._add_item_error(
+                            NoMatchingAnnError, cluster[0], missing_sources)
 
             merged_clusters = mergers[k].merge_clusters(clusters)
 
@@ -309,15 +340,18 @@ class IntersectMerge(MergingStrategy):
                         if self.close_clusters_dist < d:
                             close.append((a_ann, b_ann, d))
                 for (a_ann, b_ann, d) in close:
-                    warn("Item %s: annotations %s and %s are too close - distance is %s, threshold is %s" % \
-                        (self._item_id, a_ann, b_ann, d, self.close_clusters_dist))
                     cluster_sources = set(self._get_ann_source(id(a))
                         for a in cluster)
                     for s in cluster_sources:
-                        self._add_source_error(s)
-                    self._add_item_error()
+                        self._add_source_error(s, TooCloseError, a_ann, b_ann, d)
+                    self._add_item_error(TooCloseError, a_ann, b_ann, d)
 
             annotations += merged_clusters
+
+        # TODO: group consistence checks
+        # if self.check_groups:
+            # instances = find_instances(annotations)
+            # for inst in instances:
 
         return annotations
 
@@ -398,8 +432,10 @@ class IntersectMerge(MergingStrategy):
                     (self._item_id, ann, votes))
                 for s in cluster:
                     if s.attributes.get(name) != winner:
-                        self._add_source_error(self._get_ann_source(id(s)))
-                self._add_item_error()
+                        self._add_source_error(self._get_ann_source(id(s)),
+                            FailedAttrVotingError, ann, votes)
+                self._add_item_error(FailedAttrVotingError,
+                    ann, votes, [self._get_ann_source(id(s)) for s in cluster])
                 continue
             attributes[name] = winner
 
@@ -732,8 +768,7 @@ class _ShapeMerger(AnnotationMerger, _ShapeMatcher):
 
         label, (score, count) = max(votes.items(), key=lambda e: e[1][0])
         if count < self.quorum:
-            warn("Item %s: not enough label votes to select label: %s" % \
-                (self._context._item_id, votes))
+            self._context._add_item_error(FailedLabelVotingError, None, votes)
         score = score / count if count else None
         return label, score
 

@@ -53,6 +53,9 @@ class Annotation:
             (self.attributes == other.attributes) and \
             (self.group == other.group)
 
+    def __repr__(self):
+        return str(vars(self))
+
 class Categories:
     def __init__(self, attributes=None):
         if attributes is None:
@@ -69,6 +72,9 @@ class Categories:
             return False
         return \
             (self.attributes == other.attributes)
+
+    def __repr__(self):
+        return str(vars(self))
 
 class LabelCategories(Categories):
     Category = namedtuple('Category', ['name', 'parent', 'attributes'])
