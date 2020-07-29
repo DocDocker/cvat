@@ -61,7 +61,7 @@ class _CocoExtractor(SourceExtractor):
         coco_api = COCO()
         with open(path, 'r') as f:
             import json
-            dataset = json.load(f)
+            dataset = json.load(f, parse_float=lambda s: round(float(s), 2))
 
         coco_api.dataset = dataset
         coco_api.createIndex()

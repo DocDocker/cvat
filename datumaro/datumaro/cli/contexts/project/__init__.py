@@ -18,7 +18,7 @@ from datumaro.components.dataset_filter import DatasetItemEncoder
 from datumaro.components.extractor import AnnotationType
 from datumaro.components.cli_plugin import CliPlugin
 from datumaro.components.operations import \
-    compute_image_statistics, compute_ann_statistics
+    compute_image_statistics, compute_ann_statistics, compare_datasets
 from .diff import DiffVisualizer
 from ...util import add_subparser, CliException, MultilineFormatter, \
     make_file_name
@@ -535,9 +535,14 @@ def diff_command(args):
     first_project = load_project(args.project_dir)
     second_project = load_project(args.other_project_dir)
 
+    # distance match
     comparator = Comparator(
         iou_threshold=args.iou_thresh,
         conf_threshold=args.conf_thresh)
+
+    # exact match
+    print(compare_datasets(
+        first_project.make_dataset(), second_project.make_dataset()))
 
     dst_dir = args.dst_dir
     if dst_dir:
@@ -650,13 +655,14 @@ def stats_command(args):
     project = load_project(args.project_dir)
 
     dataset = project.make_dataset()
-    stats = compute_image_statistics(dataset)
+    stats = {}
+    stats.update(compute_image_statistics(dataset))
     stats.update(compute_ann_statistics(dataset))
 
     dst_file = generate_next_file_name('statistics', ext='.json')
     log.info("Writing project statistics to '%s'" % dst_file)
     with open(dst_file, 'w') as f:
-        json.dump(stats, f)
+        json.dump(stats, f, indent=4, sort_keys=True)
 
 def build_info_parser(parser_ctor=argparse.ArgumentParser):
     parser = parser_ctor(help="Get project info",

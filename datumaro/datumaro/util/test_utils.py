@@ -92,8 +92,7 @@ def compare_datasets(test, expected, actual):
         for ann_a in item_a.annotations:
             # We might find few corresponding items, so check them all
             ann_b_matches = [x for x in item_b.annotations
-                if x.id == ann_a.id and \
-                    x.type == ann_a.type and x.group == ann_a.group]
+                if x.type == ann_a.type]
             test.assertFalse(len(ann_b_matches) == 0, 'ann id: %s' % ann_a.id)
 
             ann_b = find(ann_b_matches, lambda x: x == ann_a)

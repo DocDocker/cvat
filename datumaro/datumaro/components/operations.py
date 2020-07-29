@@ -7,8 +7,11 @@ from copy import deepcopy
 
 import cv2
 import numpy as np
+import logging as log
 
 from datumaro.components.extractor import AnnotationType
+from datumaro.util import find
+from datumaro.util.test_utils import ann_to_str
 
 
 def mean_std(dataset):
@@ -94,12 +97,30 @@ def compute_image_statistics(dataset):
     }
 
     def _extractor_stats(extractor):
-        mean, std = mean_std(extractor)
-        return {
+        available = True
+        for item in extractor:
+            if not (item.has_image and item.image.has_data):
+                available = False
+                log.warn("Item %s has no image. Image stats won't be computed",
+                    item.id)
+                break
+
+        stats = {
             'images count': len(extractor),
-            'image mean': [float(n) for n in mean[::-1]],
-            'image std': [float(n) for n in std[::-1]],
         }
+
+        if available:
+            mean, std = mean_std(extractor)
+            stats.update({
+                'image mean': [float(n) for n in mean[::-1]],
+                'image std': [float(n) for n in std[::-1]],
+            })
+        else:
+            stats.update({
+                'image mean': 'n/a',
+                'image std': 'n/a',
+            })
+        return stats
 
     stats['dataset'].update(_extractor_stats(dataset))
 
@@ -216,3 +237,67 @@ def compute_ann_statistics(dataset):
         } for c, (bin_min, bin_max) in zip(hist, zip(bins[:-1], bins[1:]))]
 
     return stats
+
+def compare_categories(a, b):
+    from unittest import TestCase
+
+    test = TestCase()
+    test.assertEqual(
+        sorted(a, key=lambda t: t.value),
+        sorted(b, key=lambda t: t.value)
+    )
+
+    if AnnotationType.label in a:
+        test.assertEqual(
+            a[AnnotationType.label].items,
+            b[AnnotationType.label].items,
+        )
+    if AnnotationType.mask in a:
+        test.assertEqual(
+            a[AnnotationType.mask].colormap,
+            b[AnnotationType.mask].colormap,
+        )
+    if AnnotationType.points in a:
+        test.assertEqual(
+            a[AnnotationType.points].items,
+            b[AnnotationType.points].items,
+        )
+
+def compare_annotations(a, b, ignore_fields=None):
+    ignore_fields = ignore_fields or set()
+
+    a_fields = { k: v for k, v in vars(a).items() if k not in ignore_fields }
+    b_fields = { k: v for k, v in vars(b).items() if k not in ignore_fields }
+
+    return a_fields == b_fields
+
+def compare_datasets(a, b):
+    compare_categories(a.categories(), b.categories())
+
+    from unittest import TestCase
+
+    test = TestCase()
+    test.assertEqual(sorted(a.subsets()), sorted(b.subsets()))
+    test.assertEqual(len(a), len(b))
+    for item_a in a:
+        item_b = find(b, lambda x: x.id == item_a.id and x.subset == item_a.subset)
+        test.assertFalse(item_b is None, item_a.id)
+        test.assertEqual(item_a.attributes, item_b.attributes)
+        test.assertEqual(len(item_a.annotations), len(item_b.annotations))
+        for ann_a in item_a.annotations:
+            # We might find few corresponding items, so check them all
+            ann_b_matches = [x for x in item_b.annotations
+                if x.type == ann_a.type]
+            if not ann_b_matches:
+                print("can't find matches for", ann_a.id)
+
+            ann_b = find(ann_b_matches,
+                lambda x: compare_annotations(ann_a, x,
+                    ignore_fields={'id', 'group'}))
+            if ann_b is None:
+                print("can't find matches for", ann_a.id, ann_to_str(ann_a))
+                print([ann_to_str(b) for b in ann_b_matches])
+                continue
+            else:
+                print('match:', ann_to_str(ann_a), ann_to_str(ann_b))
+            item_b.annotations.remove(ann_b) # avoid repeats

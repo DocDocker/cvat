@@ -83,7 +83,7 @@ def quality_command(args):
     stats = compute_ann_statistics(dataset)
     with open(generate_next_file_name(
             'statistics', basedir=dst_dir, ext='.json'), 'w') as f:
-        json.dump(stats, f)
+        json.dump(stats, f, indent=4, sort_keys=True)
 
     log.info("Dataset quality report saved to '%s'" % dst_dir)
 
