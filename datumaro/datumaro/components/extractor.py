@@ -20,6 +20,9 @@ AnnotationType = Enum('AnnotationType',
         'caption',
     ])
 
+_COORDINATE_ROUNDING_DIGITS = 2
+
+
 class Annotation:
     # pylint: disable=redefined-builtin
     def __init__(self, id=None, type=None, attributes=None, group=None):
@@ -351,6 +354,8 @@ class _Shape(Annotation):
             id=None, attributes=None, group=None):
         super().__init__(id=id, type=type,
             attributes=attributes, group=group)
+        if points is not None:
+            points = [round(p, _COORDINATE_ROUNDING_DIGITS) for p in points]
         self._points = points
 
         if label is not None:
