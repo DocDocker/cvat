@@ -322,6 +322,7 @@ class RandomSplit(Transform, CliPlugin):
         parser = super().build_cmdline_parser(**kwargs)
         parser.add_argument('-s', '--subset', action='append',
             type=cls._split_arg, dest='splits',
+            default=[('train', 0.67), ('test', 0.33)],
             help="Subsets in the form of: '<subset>:<ratio>' (repeatable)")
         parser.add_argument('--seed', type=int, help="Random seed")
         return parser
@@ -512,7 +513,7 @@ class RemapLabels(Transform, CliPlugin):
             } and ann.label is not None:
                 conv_label = self._map_id(ann.label)
                 if conv_label is not None:
-                    ann._label = conv_label
+                    ann.label = conv_label
                     annotations.append(ann)
             else:
                 annotations.append(ann)

@@ -18,7 +18,8 @@ import sys
 from datumaro.components.config import Config, DEFAULT_FORMAT
 from datumaro.components.config_model import (Model, Source,
     PROJECT_DEFAULT_CONFIG, PROJECT_SCHEMA)
-from datumaro.components.extractor import Extractor
+from datumaro.components.extractor import Extractor, LabelCategories,\
+    AnnotationType
 from datumaro.components.launcher import ModelTransform
 from datumaro.components.dataset_filter import \
     XPathDatasetFilter, XPathAnnotationsFilter
@@ -104,7 +105,7 @@ class GitWrapper:
     def __init__(self, config=None):
         self.repo = None
 
-        if config is not None and osp.isdir(config.project_dir):
+        if config is not None and config.project_dir:
             self.init(config.project_dir)
 
     @staticmethod
@@ -116,8 +117,12 @@ class GitWrapper:
         spawn = not osp.isdir(cls._git_dir(path))
         repo = git.Repo.init(path=path)
         if spawn:
-            author = git.Actor("Nobody", "nobody@example.com")
-            repo.index.commit('Initial commit', author=author)
+            repo.config_writer().set_value("user", "name", "User") \
+                .set_value("user", "email", "user@nowhere.com") \
+                .release()
+            # gitpython does not support init, use git directly
+            repo.git.init()
+            repo.git.commit('-m', 'Initial commit', '--allow-empty')
         return repo
 
     def init(self, path):
@@ -316,6 +321,35 @@ class Subset(Extractor):
 
 class Dataset(Extractor):
     @classmethod
+    def from_iterable(cls, iterable, categories=None):
+        """Generation of Dataset from iterable object
+
+        Args:
+            iterable: Iterable object contains DatasetItems
+            categories (dict, optional): You can pass dict of categories or
+            you can pass list of names. It'll interpreted as list of names of
+            LabelCategories. Defaults to {}.
+
+        Returns:
+            Dataset: Dataset object
+        """
+
+        if isinstance(categories, list):
+            categories = {AnnotationType.label : LabelCategories.from_iterable(categories)}
+
+        if not categories:
+            categories = {}
+
+        class tmpExtractor(Extractor):
+            def __iter__(self):
+                return iter(iterable)
+
+            def categories(self):
+                return categories
+
+        return cls.from_extractors(tmpExtractor())
+
+    @classmethod
     def from_extractors(cls, *sources):
         categories = cls._merge_categories(s.categories() for s in sources)
         dataset = Dataset(categories=categories)
@@ -368,9 +402,10 @@ class Dataset(Extractor):
     def get(self, item_id, subset=None, path=None):
         if path:
             raise KeyError("Requested dataset item path is not found")
-        if subset is None:
-            subset = ''
-        return self._subsets[subset].items[item_id]
+        item_id = str(item_id)
+        subset = subset or ''
+        subset = self._subsets[subset]
+        return subset.items[item_id]
 
     def put(self, item, item_id=None, subset=None, path=None):
         if path:
@@ -550,8 +585,7 @@ class ProjectDataset(Dataset):
             rest_path = path[1:]
             return self._sources[source].get(
                 item_id=item_id, subset=subset, path=rest_path)
-        subset = self._subsets[subset]
-        return subset.items[item_id]
+        return super().get(item_id, subset)
 
     def put(self, item, item_id=None, subset=None, path=None):
         if path is None:
@@ -603,9 +637,8 @@ class ProjectDataset(Dataset):
 
             if merge:
                 # merge and save the resulting dataset
-                converter = self.env.make_converter(
-                    DEFAULT_FORMAT, **converter_kwargs)
-                converter(self, dataset_save_dir)
+                self.env.converters.get(DEFAULT_FORMAT).convert(
+                    self, dataset_save_dir, **converter_kwargs)
             else:
                 if recursive:
                     # children items should already be updated
@@ -614,9 +647,8 @@ class ProjectDataset(Dataset):
                         if isinstance(source, ProjectDataset):
                             source.save(**converter_kwargs)
 
-                converter = self.env.make_converter(
-                    DEFAULT_FORMAT, **converter_kwargs)
-                converter(self.iterate_own(), dataset_save_dir)
+                self.env.converters.get(DEFAULT_FORMAT).convert(
+                    self.iterate_own(), dataset_save_dir, **converter_kwargs)
 
             project.save(save_dir)
         except BaseException:
@@ -744,9 +776,10 @@ class Project:
 
     @staticmethod
     def generate(save_dir, config=None):
+        config = Config(config)
+        config.project_dir = save_dir
         project = Project(config)
         project.save(save_dir)
-        project.config.project_dir = save_dir
         return project
 
     @staticmethod

@@ -409,6 +409,7 @@ class AnnotationSerializer(serializers.Serializer):
     frame = serializers.IntegerField(min_value=0)
     label_id = serializers.IntegerField(min_value=0)
     group = serializers.IntegerField(min_value=0, allow_null=True)
+    source = serializers.CharField(default = 'manual')
 
 class LabeledImageSerializer(AnnotationSerializer):
     attributes = AttributeValSerializer(many=True,
@@ -449,12 +450,6 @@ class LabeledDataSerializer(serializers.Serializer):
 class FileInfoSerializer(serializers.Serializer):
     name = serializers.CharField(max_length=1024)
     type = serializers.ChoiceField(choices=["REG", "DIR"])
-
-class PluginSerializer(serializers.ModelSerializer):
-    class Meta:
-        model = models.Plugin
-        fields = ('name', 'description', 'maintainer', 'created_at',
-            'updated_at')
 
 class LogEventSerializer(serializers.Serializer):
     job_id = serializers.IntegerField(required=False)

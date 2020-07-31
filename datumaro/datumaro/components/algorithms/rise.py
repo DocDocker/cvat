@@ -185,7 +185,7 @@ class RISE:
                                 continue
 
                             iou = pred.iou(detection)
-                            assert 0 <= iou and iou <= 1
+                            assert iou == -1 or 0 <= iou and iou <= 1
                             if iou < iou_thresh:
                                 continue
 

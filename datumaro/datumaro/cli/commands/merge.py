@@ -14,7 +14,7 @@ from datumaro.components.operations import (IntersectMerge,
     QualityError, MergeError)
 
 from ..util import at_least, MultilineFormatter, CliException
-from ..util.project import generate_next_dir_name, load_project
+from ..util.project import generate_next_file_name, load_project
 
 
 def build_parser(parser_ctor=argparse.ArgumentParser):
@@ -60,7 +60,7 @@ def merge_command(args):
             raise CliException("Directory '%s' already exists "
                 "(pass --overwrite to overwrite)" % dst_dir)
     else:
-        dst_dir = generate_next_dir_name('merged')
+        dst_dir = generate_next_file_name('merged')
 
     source_datasets = []
     for p in source_projects:

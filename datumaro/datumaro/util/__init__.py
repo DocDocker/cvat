@@ -62,6 +62,10 @@ def to_snake_case(s):
             name.append(char)
     return ''.join(name)
 
+def pairs(iterable):
+    a = iter(iterable)
+    return zip(a, a)
+
 def take_by(iterable, count):
     """
     Returns elements from the input iterable by batches of N items.
@@ -84,10 +88,6 @@ def str_to_bool(s):
         return False
     else:
         raise ValueError("Can't convert value '%s' to bool" % s)
-
-def pairs(iterable):
-    a = iter(iterable)
-    return zip(a, a)
 
 def ensure_cls(c):
     def converter(arg):

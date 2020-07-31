@@ -70,6 +70,7 @@ def make_parser():
         ('explain', commands.explain, "Run Explainable AI algorithm for model"),
         ('quality', commands.quality, "Estimate dataset quality"),
         ('merge', commands.merge, "Merge datasets"),
+        ('convert', commands.convert, "Convert dataset"),
     ]
 
     # Argparse doesn't support subparser groups:

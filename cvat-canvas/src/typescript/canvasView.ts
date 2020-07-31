@@ -991,7 +991,7 @@ export class CanvasViewImpl implements CanvasView, Listener {
             }
         } else if (reason === UpdateReasons.IMAGE_MOVED) {
             this.moveCanvas();
-        } else if ([UpdateReasons.OBJECTS_UPDATED, UpdateReasons.SET_Z_LAYER].includes(reason)) {
+        } else if ([UpdateReasons.OBJECTS_UPDATED].includes(reason)) {
             if (this.mode === Mode.GROUP) {
                 this.groupHandler.resetSelectedObjects();
             }
@@ -1128,7 +1128,6 @@ export class CanvasViewImpl implements CanvasView, Listener {
         if (model.imageBitmap
             && [UpdateReasons.IMAGE_CHANGED,
                 UpdateReasons.OBJECTS_UPDATED,
-                UpdateReasons.SET_Z_LAYER,
             ].includes(reason)
         ) {
             this.redrawBitmap();
@@ -1733,14 +1732,19 @@ export class CanvasViewImpl implements CanvasView, Listener {
 
     private addText(state: any): SVG.Text {
         const { undefinedAttrValue } = this.configuration;
-        const { label, clientID, attributes } = state;
+        const {
+            label,
+            clientID,
+            attributes,
+            source,
+        } = state;
         const attrNames = label.attributes.reduce((acc: any, val: any): void => {
             acc[val.id] = val.name;
             return acc;
         }, {});
 
         return this.adoptedText.text((block): void => {
-            block.tspan(`${label.name} ${clientID}`).style('text-transform', 'uppercase');
+            block.tspan(`${label.name} ${clientID} (${source})`).style('text-transform', 'uppercase');
             for (const attrID of Object.keys(attributes)) {
                 const value = attributes[attrID] === undefinedAttrValue
                     ? '' : attributes[attrID];

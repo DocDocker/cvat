@@ -102,7 +102,6 @@ export default class CanvasWrapperComponent extends React.PureComponent<Props> {
             automaticBordering,
             showObjectsTextAlways,
             canvasInstance,
-            curZLayer,
         } = this.props;
 
         // It's awful approach from the point of view React
@@ -116,7 +115,6 @@ export default class CanvasWrapperComponent extends React.PureComponent<Props> {
             undefinedAttrValue: consts.UNDEFINED_ATTRIBUTE_VALUE,
             displayAllText: showObjectsTextAlways,
         });
-        canvasInstance.setZLayer(curZLayer);
 
         this.initialSetup();
         this.updateCanvas();
@@ -217,17 +215,15 @@ export default class CanvasWrapperComponent extends React.PureComponent<Props> {
             }
         }
 
-        if (prevProps.curZLayer !== curZLayer) {
-            canvasInstance.setZLayer(curZLayer);
-        }
-
-        if (prevProps.annotations !== annotations || prevProps.frameData !== frameData) {
+        if (prevProps.annotations !== annotations
+            || prevProps.frameData !== frameData
+            || prevProps.curZLayer !== curZLayer) {
             this.updateCanvas();
         }
 
         if (prevProps.frame !== frameData.number
-            && ((resetZoom && workspace !== Workspace.ATTRIBUTE_ANNOTATION) ||
-            workspace === Workspace.TAG_ANNOTATION)
+            && ((resetZoom && workspace !== Workspace.ATTRIBUTE_ANNOTATION)
+            || workspace === Workspace.TAG_ANNOTATION)
         ) {
             canvasInstance.html().addEventListener('canvas.setup', () => {
                 canvasInstance.fit();
@@ -636,6 +632,7 @@ export default class CanvasWrapperComponent extends React.PureComponent<Props> {
 
     private updateCanvas(): void {
         const {
+            curZLayer,
             annotations,
             frameData,
             canvasInstance,
@@ -643,7 +640,7 @@ export default class CanvasWrapperComponent extends React.PureComponent<Props> {
 
         if (frameData !== null) {
             canvasInstance.setup(frameData, annotations
-                .filter((e) => e.objectType !== ObjectType.TAG));
+                .filter((e) => e.objectType !== ObjectType.TAG), curZLayer);
         }
     }
 
@@ -879,7 +876,7 @@ export default class CanvasWrapperComponent extends React.PureComponent<Props> {
                         defaultValue={0}
                         onChange={(value: SliderValue): void => onSwitchZLayer(value as number)}
                     />
-                    <Tooltip title={`Add new layer ${maxZLayer + 1} and switch to it`}>
+                    <Tooltip title={`Add new layer ${maxZLayer + 1} and switch to it`} mouseLeaveDelay={0}>
                         <Icon type='plus-circle' onClick={onAddZLayer} />
                     </Tooltip>
                 </div>

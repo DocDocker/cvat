@@ -13,7 +13,7 @@ from datumaro.components.operations import Comparator
 
 from ..contexts.project.diff import DiffVisualizer
 from ..util import CliException, MultilineFormatter
-from ..util.project import generate_next_dir_name, load_project
+from ..util.project import generate_next_file_name, load_project
 
 
 def build_parser(parser_ctor=argparse.ArgumentParser):
@@ -54,7 +54,7 @@ def quality_command(args):
             raise CliException("Directory '%s' already exists "
                 "(pass --overwrite to force creation)" % dst_dir)
     else:
-        dst_dir = generate_next_dir_name('%s-quality-report' % \
+        dst_dir = generate_next_file_name('%s-quality-report' % \
             project.config.project_name)
     dst_dir = osp.abspath(dst_dir)
 
