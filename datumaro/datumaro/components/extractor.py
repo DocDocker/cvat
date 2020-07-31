@@ -119,6 +119,9 @@ class LabelCategories(Categories):
             return index, self.items[index]
         return index, None
 
+    def __iter__(self):
+        return iter(self.items)
+
     def __eq__(self, other):
         if not super().__eq__(other):
             return False

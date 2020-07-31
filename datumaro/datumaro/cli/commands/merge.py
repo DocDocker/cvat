@@ -33,10 +33,6 @@ def build_parser(parser_ctor=argparse.ArgumentParser):
         help="Path to a project (repeatable)")
     parser.add_argument('-iou', '--iou-thresh', default=0.25, type=float,
         help="IoU match threshold for segments (default: %(default)s)")
-    parser.add_argument('-iconf', '--input-conf-thresh',
-        default=0.25, type=float,
-        help="Confidence threshold for input "
-            "annotations (default: %(default)s)")
     parser.add_argument('-oconf', '--output-conf-thresh',
         default=0.0, type=float,
         help="Confidence threshold for output "
@@ -68,9 +64,12 @@ def merge_command(args):
         log.debug("Loading project '%s' dataset", p.config.project_name)
         source_datasets.append(p.make_dataset())
 
-    merged_dataset = IntersectMerge.merge(source_datasets,
-        pairwise_dist=args.iou_thresh, input_conf_thresh=args.input_conf_thresh,
+    merger = IntersectMerge(conf=IntersectMerge.Conf(
+        pairwise_dist=args.iou_thresh,
         output_conf_thresh=args.output_conf_thresh, quorum=args.quorum)
+    )
+    merged_dataset = merger(source_datasets)
+    errors = merger._errors
 
     merged_project = Project()
     output_dataset = merged_project.make_dataset()
