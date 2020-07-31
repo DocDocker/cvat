@@ -9,8 +9,8 @@ import logging as log
 import os
 import os.path as osp
 
-from datumaro.components.comparator import Comparator
 from datumaro.components.launcher import ModelTransform
+from datumaro.components.operations import Comparator
 
 from ..contexts.project import compute_ann_statistics
 from ..contexts.project.diff import DiffVisualizer
