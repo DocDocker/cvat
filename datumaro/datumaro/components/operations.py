@@ -39,7 +39,7 @@ def match_annotations_equal(a, b):
 
 def merge_annotations_equal(a, b):
     matches, a_unmatched, b_unmatched = match_annotations_equal(a, b)
-    return [ann_a for (ann_a, ann_b) in matches] + a_unmatched + b_unmatched
+    return [ann_a for (ann_a, _) in matches] + a_unmatched + b_unmatched
 
 def merge_categories(sources):
     categories = {}
