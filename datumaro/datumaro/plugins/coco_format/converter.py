@@ -14,7 +14,7 @@ import pycocotools.mask as mask_utils
 
 from datumaro.components.converter import Converter
 from datumaro.components.extractor import (DEFAULT_SUBSET_NAME,
-    AnnotationType, Points
+    AnnotationType, Points, _COORDINATE_ROUNDING_DIGITS
 )
 from datumaro.components.cli_plugin import CliPlugin
 from datumaro.util import find, cast, str_to_bool
@@ -301,8 +301,8 @@ class _InstancesConverter(_TaskConverter):
                 rles = mask_utils.merge(rles)
             area = mask_utils.area(rles)
         else:
-            x, y, w, h = bbox
-            segmentation = [[x, y, x + w, y, x + w, y + h, x, y + h]]
+            _, _, w, h = bbox
+            segmentation = []
             area = w * h
 
         elem = {
@@ -311,7 +311,7 @@ class _InstancesConverter(_TaskConverter):
             'category_id': cast(ann.label, int, -1) + 1,
             'segmentation': segmentation,
             'area': float(area),
-            'bbox': list(map(float, bbox)),
+            'bbox': [round(n, _COORDINATE_ROUNDING_DIGITS) for n in bbox],
             'iscrowd': int(is_crowd),
         }
         if 'score' in ann.attributes:
