@@ -311,7 +311,7 @@ class _InstancesConverter(_TaskConverter):
             'category_id': cast(ann.label, int, -1) + 1,
             'segmentation': segmentation,
             'area': float(area),
-            'bbox': [round(n, _COORDINATE_ROUNDING_DIGITS) for n in bbox],
+            'bbox': [round(float(n), _COORDINATE_ROUNDING_DIGITS) for n in bbox],
             'iscrowd': int(is_crowd),
         }
         if 'score' in ann.attributes:
@@ -339,7 +339,6 @@ class _KeypointsConverter(_InstancesConverter):
                 'supercategory': cast(label_cat.parent, str, ''),
                 'keypoints': [],
                 'skeleton': [],
-
             }
 
             if point_categories is not None:
