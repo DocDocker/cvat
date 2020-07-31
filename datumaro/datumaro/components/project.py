@@ -446,8 +446,8 @@ class Dataset(Extractor):
     @staticmethod
     def _merge_anno(a, b):
         # TODO: implement properly with merging and annotations remapping
-        from .operations import merge_annotations_unique
-        return merge_annotations_unique(a, b)
+        from .operations import merge_annotations_equal
+        return merge_annotations_equal(a, b)
 
     @staticmethod
     def _merge_categories(sources):

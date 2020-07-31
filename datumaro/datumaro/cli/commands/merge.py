@@ -4,11 +4,14 @@
 # SPDX-License-Identifier: MIT
 
 import argparse
+import json
 import logging as log
 import os.path as osp
+from collections import OrderedDict
 
 from datumaro.components.project import Project
-from datumaro.components.operations import IntersectMerge
+from datumaro.components.operations import (IntersectMerge,
+    QualityError, MergeError)
 
 from ..util import at_least, MultilineFormatter, CliException
 from ..util.project import generate_next_dir_name, load_project
@@ -69,7 +72,6 @@ def merge_command(args):
         output_conf_thresh=args.output_conf_thresh, quorum=args.quorum)
     )
     merged_dataset = merger(source_datasets)
-    errors = merger._errors
 
     merged_project = Project()
     output_dataset = merged_project.make_dataset()
@@ -77,7 +79,35 @@ def merge_command(args):
     merged_dataset = output_dataset.update(merged_dataset)
     merged_dataset.save(save_dir=dst_dir)
 
+    report_path = osp.join(dst_dir, 'merge_report.json')
+    save_merge_report(merger, report_path)
+
     dst_dir = osp.abspath(dst_dir)
     log.info("Merge results have been saved to '%s'" % dst_dir)
+    log.info("Report has been saved to '%s'" % report_path)
 
     return 0
+
+def save_merge_report(merger, path):
+    item_errors = OrderedDict()
+    source_errors = OrderedDict()
+    all_errors = []
+
+    for e in merger.errors:
+        if isinstance(e, QualityError):
+            item_errors[str(e.item_id)] = item_errors.get(str(e.item_id), 0) + 1
+        elif isinstance(e, MergeError):
+            for s in e.sources:
+                source_errors[s] = source_errors.get(s, 0) + 1
+            item_errors[str(e.item_id)] = item_errors.get(str(e.item_id), 0) + 1
+
+        all_errors.append(str(e))
+
+    errors = OrderedDict([
+        ('Item errors', item_errors),
+        ('Source errors', source_errors),
+        ('All errors', all_errors),
+    ])
+
+    with open(path, 'w') as f:
+        json.dump(errors, f, indent=4)

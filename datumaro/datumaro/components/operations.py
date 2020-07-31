@@ -14,25 +14,32 @@ from attr import attrib, attrs
 from datumaro.components.cli_plugin import CliPlugin
 from datumaro.components.extractor import AnnotationType, Bbox, LabelCategories
 from datumaro.components.project import Dataset
-from datumaro.util import find
+from datumaro.util import find, ensure_cls
 from datumaro.util.annotation_util import (segment_iou, bbox_iou,
     mean_bbox, OKS, find_instances, max_bbox)
 
 def get_ann_type(anns, t):
     return [a for a in anns if a.type == t]
 
-def merge_annotations_unique(a, b):
-    merged = []
-    for item in chain(a, b):
-        found = False
-        for elem in merged:
-            if elem == item:
-                found = True
-                break
-        if not found:
-            merged.append(item)
+def match_annotations_equal(a, b):
+    matches = []
+    a_unmatched = a[:]
+    b_unmatched = b[:]
+    for a_ann in a:
+        for b_ann in b_unmatched:
+            if a_ann != b_ann:
+                continue
 
-    return merged
+            matches.append((a_ann, b_ann))
+            a_unmatched.remove(a_ann)
+            b_unmatched.remove(b_ann)
+            break
+
+    return matches, a_unmatched, b_unmatched
+
+def merge_annotations_equal(a, b):
+    matches, a_unmatched, b_unmatched = match_annotations_equal(a, b)
+    return [ann_a for (ann_a, ann_b) in matches] + a_unmatched + b_unmatched
 
 def merge_categories(sources):
     categories = {}
@@ -73,6 +80,10 @@ class TooCloseError(QualityError):
     b = attrib()
     distance = attrib()
 
+    def __str__(self):
+        return "Item %s: annotations are too close: %s, %s, distance = %s" % \
+            (self.item_id, self.a, self.b, self.distance)
+
 @attrs
 class MergeError(DatasetError):
     sources = attrib()
@@ -81,20 +92,37 @@ class MergeError(DatasetError):
 class NoMatchingAnnError(MergeError):
     ann = attrib()
 
+    def __str__(self):
+        return "Item %s: can't find matching annotation " \
+            "in sources %s, annotation is %s" % \
+            (self.item_id, self.sources, self.ann)
+
 @attrs
 class NoMatchingItemError(MergeError):
-    pass
+    def __str__(self):
+        return "Item %s: can't find matching item in sources %s" % \
+            (self.item_id, self.sources)
 
 @attrs
 class FailedLabelVotingError(MergeError):
     votes = attrib()
     ann = attrib(default=None)
 
+    def __str__(self):
+        return "Item %s: label voting failed%s, votes %s, sources %s" % \
+            (self.item_id, 'for ann %s' % self.ann if self.ann else '',
+            self.votes, self.sources)
+
 @attrs
 class FailedAttrVotingError(MergeError):
     attr = attrib()
     votes = attrib()
     ann = attrib()
+
+    def __str__(self):
+        return "Item %s: attribute voting failed " \
+            "for ann %s, votes %s, sources %s" % \
+            (self.item_id, self.ann, self.votes, self.sources)
 
 @attrs
 class IntersectMerge(MergingStrategy):
@@ -111,12 +139,12 @@ class IntersectMerge(MergingStrategy):
         close_distance = attrib(converter=float, default=0.75)
 
         check_anno_presence = attrib(converter=bool, default=False)
-    conf = attrib(converter=Conf, factory=Conf)
+    conf = attrib(converter=ensure_cls(Conf), factory=Conf)
 
     # Error trackers:
-    _errors = []
+    errors = attrib(default=[], init=False)
     def add_item_error(self, error, *args, **kwargs):
-        self._errors.append(error(self._item_id, *args, **kwargs))
+        self.errors.append(error(self._item_id, *args, **kwargs))
 
     # Indexes:
     _dataset_map = attrib(init=False) # id(dataset) -> (dataset, index)
@@ -133,19 +161,17 @@ class IntersectMerge(MergingStrategy):
         self._item_map = item_map
         self._dataset_map = { id(d): (d, i) for i, d in enumerate(datasets) }
 
-        self._source_errors = { id(d): {} for d in datasets }
-
         for item_id, items in item_matches.items():
             self._item_id = item_id
 
             if len(items) < len(datasets):
-                missing_sources = set(id(s) for s in sources) - \
+                missing_sources = set(id(s) for s in datasets) - \
                     set(item_map[id(i)][1] for i in items)
-
+                missing_sources = [self._dataset_map[s][1]
+                    for s in missing_sources]
                 self.add_item_error(NoMatchingItemError, missing_sources)
             merged.put(self.merge_items(items))
 
-        print(self._errors)
         return merged
 
     def get_ann_source(self, ann_id):
@@ -166,7 +192,7 @@ class IntersectMerge(MergingStrategy):
         annotations = self.merge_annotations(sources)
 
         annotations = [a for a in annotations
-            if self.output_conf_thresh <= a.attributes.get('score', 1)]
+            if self.conf.output_conf_thresh <= a.attributes.get('score', 1)]
 
         return self._item.wrap(annotations=annotations)
 
@@ -180,16 +206,15 @@ class IntersectMerge(MergingStrategy):
 
         annotations = []
         for t, clusters in clusters.items():
-            if self.check_anno_presence:
-                for cluster in clusters:
-                    self._check_cluster_sources(cluster)
+            for cluster in clusters:
+                self._check_cluster_sources(cluster)
 
             merged_clusters = self._merge_clusters(t, clusters)
 
             for merged_ann, cluster in zip(merged_clusters, clusters):
                 attributes = self._find_cluster_attrs(cluster, merged_ann)
                 attributes = { k: v for k, v in attributes.items()
-                    if k not in self.ignored_attributes }
+                    if k not in self.conf.ignored_attributes }
                 attributes.update(merged_ann.attributes)
                 merged_ann.attributes = attributes
 
@@ -201,13 +226,13 @@ class IntersectMerge(MergingStrategy):
                     new_group_id += 1
                 merged_ann.group = new_group_id
 
-            if self.close_clusters_dist:
-                self._check_annotation_distance(merged_clusters)
+            if self.conf.close_distance:
+                self._check_annotation_distance(t, merged_clusters)
 
             annotations += merged_clusters
 
         # TODO: group consistence checks
-        # if self.check_groups:
+        # if self.conf.check_groups:
             # instances = find_instances(annotations)
             # for inst in instances:
 
@@ -251,7 +276,6 @@ class IntersectMerge(MergingStrategy):
     def _make_mergers(self, sources):
         def _make(c, **kwargs):
             kwargs['context'] = self
-            print(self.conf)
             kwargs.update(attr.asdict(self.conf))
             fields = attr.fields_dict(c)
             return c(**{ k: v for k, v in kwargs.items() if k in fields })
@@ -269,6 +293,8 @@ class IntersectMerge(MergingStrategy):
                 return _make(LineMerger, **kwargs)
             elif t is AnnotationType.points:
                 return _make(PointsMerger, **kwargs)
+            elif t is AnnotationType.caption:
+                return _make(CaptionsMerger, **kwargs)
             else:
                 raise NotImplementedError("Type %s is not supported" % t)
 
@@ -320,7 +346,7 @@ class IntersectMerge(MergingStrategy):
         return cluster_groups
 
     def _find_cluster_attrs(self, cluster, ann):
-        quorum = self.quorum or 0
+        quorum = self.conf.quorum or 0
 
         # TODO: when attribute types are implemented, add linear
         # interpolation for contiguous values
@@ -336,11 +362,13 @@ class IntersectMerge(MergingStrategy):
         for name, votes in attr_votes.items():
             winner, count = max(votes.items(), key=lambda e: e[1])
             if count < quorum:
+                missing_sources = set(
+                    self.get_ann_source(id(a)) for a in cluster
+                    if s.attributes.get(name) != winner)
+                missing_sources = [self._dataset_map[s][1]
+                    for s in missing_sources]
                 self.add_item_error(FailedAttrVotingError,
-                    set(self.get_ann_source(id(a)) for a in cluster
-                        if s.attributes.get(name) != winner),
-                    name, votes, ann
-                )
+                    missing_sources, name, votes, ann)
                 continue
             attributes[name] = winner
 
@@ -350,15 +378,27 @@ class IntersectMerge(MergingStrategy):
         if len(cluster) == len(self._dataset_map):
             return
 
+        def _has_item(s):
+            try:
+                item =self._dataset_map[s][0].get(*self._item_id)
+                if len(item.annotations) == 0:
+                    return False
+                return True
+            except KeyError:
+                return False
+
         missing_sources = set(self._dataset_map) - \
             set(self.get_ann_source(id(a)) for a in cluster)
-        self.add_item_error(NoMatchingAnnError, missing_sources, cluster[0])
+        missing_sources = [self._dataset_map[s][1] for s in missing_sources
+            if _has_item(s)]
+        if missing_sources:
+            self.add_item_error(NoMatchingAnnError, missing_sources, cluster[0])
 
-    def _check_annotation_distance(self, annotations):
+    def _check_annotation_distance(self, t, annotations):
         for a_idx, a_ann in enumerate(annotations):
             for b_ann in annotations[a_idx+1:]:
-                d = mergers[k].distance(a_ann, b_ann)
-                if self.close_clusters_dist < d:
+                d = self._mergers[t].distance(a_ann, b_ann)
+                if self.conf.close_distance < d:
                     self.add_item_error(TooCloseError, a_ann, b_ann, d)
 
 @attrs
@@ -374,14 +414,14 @@ class LabelMatcher(AnnotationMatcher):
 @attrs(kw_only=True)
 class _ShapeMatcher(AnnotationMatcher):
     pairwise_dist = attrib(converter=float, default=0.9)
-    cluster_dist = attrib(converter=float, default=None)
+    cluster_dist = attrib(converter=float, default=-1.0)
 
     def match_annotations(self, sources):
         distance = self.distance
         pairwise_dist = self.pairwise_dist
         cluster_dist = self.cluster_dist
 
-        if cluster_dist is None: cluster_dist = pairwise_dist
+        if cluster_dist < 0: cluster_dist = pairwise_dist
 
         id_segm = { id(a): (a, id(s)) for s in sources for a in s }
 
@@ -485,6 +525,12 @@ class LineMatcher(_ShapeMatcher):
 
         return abs(np.dot(p1, p2))
 
+@attrs
+class CaptionsMatcher(AnnotationMatcher):
+    def match_annotations(self, sources):
+        raise NotImplementedError()
+
+
 @attrs(kw_only=True)
 class AnnotationMerger:
     _context = attrib(type=IntersectMerge, default=None)
@@ -511,10 +557,11 @@ class LabelMerger(AnnotationMerger):
             if self.quorum <= count:
                 labels[name] = label
             else:
+                sources = set(self.get_ann_source(id(a)) for a in clusters[0]
+                        if label not in [l.label for l in a])
+                sources = [self._context._dataset_map[s][1] for s in sources]
                 self._context.add_item_error(FailedLabelVotingError,
-                    set(self.get_ann_source(id(a)) for a in clusters[0]
-                        if label not in [l.label for l in a]),
-                    votes)
+                    sources, votes)
 
         return labels
 
@@ -580,6 +627,10 @@ class PointsMerger(_ShapeMerger, PointsMatcher):
 
 @attrs
 class LineMerger(_ShapeMerger, LineMatcher):
+    pass
+
+@attrs
+class CaptionsMerger(AnnotationMerger, CaptionsMatcher):
     pass
 
 def smooth_line(points, segments):

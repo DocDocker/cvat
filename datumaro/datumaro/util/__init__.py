@@ -88,3 +88,11 @@ def str_to_bool(s):
 def pairs(iterable):
     a = iter(iterable)
     return zip(a, a)
+
+def ensure_cls(c):
+    def converter(arg):
+        if isinstance(arg, c):
+            return arg
+        else:
+            return c(**arg)
+    return converter
