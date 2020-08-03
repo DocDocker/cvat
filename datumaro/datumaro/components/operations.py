@@ -729,7 +729,7 @@ def match_segments(a_segms, b_segms, distance='iou', dist_thresh=1.0):
     return matches, mispred, a_unmatched, b_unmatched
 
 @attrs
-class Comparator:
+class DistanceDatasetMatcher:
     iou_threshold = attrib(converter=float, default=0.5)
 
     @staticmethod
@@ -1054,66 +1054,76 @@ def compute_ann_statistics(dataset):
 
     return stats
 
-def compare_categories(a, b):
-    from unittest import TestCase
+@attrs
+class ExactDatasetMatcher:
+    @staticmethod
+    def match_classes(a, b):
 
-    test = TestCase()
-    test.assertEqual(
-        sorted(a, key=lambda t: t.value),
-        sorted(b, key=lambda t: t.value)
-    )
 
-    if AnnotationType.label in a:
+
+    @staticmethod
+    def match_categories(a, b):
         test.assertEqual(
-            a[AnnotationType.label].items,
-            b[AnnotationType.label].items,
-        )
-    if AnnotationType.mask in a:
-        test.assertEqual(
-            a[AnnotationType.mask].colormap,
-            b[AnnotationType.mask].colormap,
-        )
-    if AnnotationType.points in a:
-        test.assertEqual(
-            a[AnnotationType.points].items,
-            b[AnnotationType.points].items,
+            sorted(a, key=lambda t: t.value),
+            sorted(b, key=lambda t: t.value)
         )
 
-def compare_annotations(a, b, ignore_fields=None):
-    ignore_fields = ignore_fields or set()
+        if AnnotationType.label in a:
+            test.assertEqual(
+                a[AnnotationType.label].items,
+                b[AnnotationType.label].items,
+            )
+        if AnnotationType.mask in a:
+            test.assertEqual(
+                a[AnnotationType.mask].colormap,
+                b[AnnotationType.mask].colormap,
+            )
+        if AnnotationType.points in a:
+            test.assertEqual(
+                a[AnnotationType.points].items,
+                b[AnnotationType.points].items,
+            )
 
-    a_fields = { k: v for k, v in vars(a).items() if k not in ignore_fields }
-    b_fields = { k: v for k, v in vars(b).items() if k not in ignore_fields }
+    @staticmethod
+    def match_annotations(a, b, ignore_fields=None):
+        ignore_fields = ignore_fields or set()
 
-    return a_fields == b_fields
+        a_fields = { k: v for k, v in vars(a).items() if k not in ignore_fields }
+        b_fields = { k: v for k, v in vars(b).items() if k not in ignore_fields }
 
-def compare_datasets(a, b):
-    compare_categories(a.categories(), b.categories())
+        matches = []
 
-    from unittest import TestCase
+    @staticmethod
+    def compare_annotations(a, b, ignore_fields=None):
 
-    test = TestCase()
-    test.assertEqual(sorted(a.subsets()), sorted(b.subsets()))
-    test.assertEqual(len(a), len(b))
-    for item_a in a:
-        item_b = find(b, lambda x: x.id == item_a.id and x.subset == item_a.subset)
-        test.assertFalse(item_b is None, item_a.id)
-        test.assertEqual(item_a.attributes, item_b.attributes)
-        test.assertEqual(len(item_a.annotations), len(item_b.annotations))
-        for ann_a in item_a.annotations:
-            # We might find few corresponding items, so check them all
-            ann_b_matches = [x for x in item_b.annotations
-                if x.type == ann_a.type]
-            if not ann_b_matches:
-                print("can't find matches for", ann_a.id)
 
-            ann_b = find(ann_b_matches,
-                lambda x: compare_annotations(ann_a, x,
-                    ignore_fields={'id', 'group'}))
-            if ann_b is None:
-                print("can't find matches for", ann_a.id, ann_to_str(ann_a))
-                print([ann_to_str(b) for b in ann_b_matches])
-                continue
-            else:
-                print('match:', ann_to_str(ann_a), ann_to_str(ann_b))
-            item_b.annotations.remove(ann_b) # avoid repeats
+        return a_fields == b_fields
+
+    @staticmethod
+    def compare_datasets(a, b):
+        compare_categories(a.categories(), b.categories())
+
+        test.assertEqual(sorted(a.subsets()), sorted(b.subsets()))
+        test.assertEqual(len(a), len(b))
+        for item_a in a:
+            item_b = find(b, lambda x: x.id == item_a.id and x.subset == item_a.subset)
+            test.assertFalse(item_b is None, item_a.id)
+            test.assertEqual(item_a.attributes, item_b.attributes)
+            test.assertEqual(len(item_a.annotations), len(item_b.annotations))
+            for ann_a in item_a.annotations:
+                # We might find few corresponding items, so check them all
+                ann_b_matches = [x for x in item_b.annotations
+                    if x.type == ann_a.type]
+                if not ann_b_matches:
+                    print("can't find matches for", ann_a.id)
+
+                ann_b = find(ann_b_matches,
+                    lambda x: compare_annotations(ann_a, x,
+                        ignore_fields={'id', 'group'}))
+                if ann_b is None:
+                    print("can't find matches for", ann_a.id, ann_to_str(ann_a))
+                    print([ann_to_str(b) for b in ann_b_matches])
+                    continue
+                else:
+                    print('match:', ann_to_str(ann_a), ann_to_str(ann_b))
+                item_b.annotations.remove(ann_b) # avoid repeats
