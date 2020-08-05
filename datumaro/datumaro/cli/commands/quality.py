@@ -10,7 +10,7 @@ import os
 import os.path as osp
 
 from datumaro.components.launcher import ModelTransform
-from datumaro.components.operations import Comparator
+from datumaro.components.operations import DistanceComparator
 
 from ..contexts.project import compute_ann_statistics
 from ..contexts.project.diff import DiffVisualizer
