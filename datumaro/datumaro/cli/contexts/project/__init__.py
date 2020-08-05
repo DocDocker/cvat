@@ -14,7 +14,7 @@ from enum import Enum
 from datumaro.components.cli_plugin import CliPlugin
 from datumaro.components.dataset_filter import DatasetItemEncoder
 from datumaro.components.extractor import AnnotationType
-from datumaro.components.operations import (Comparator, compare_datasets,
+from datumaro.components.operations import (DistanceComparator, ExactComparator,
     compute_ann_statistics, compute_image_statistics, mean_std)
 from datumaro.components.project import \
     PROJECT_DEFAULT_CONFIG as DEFAULT_CONFIG
@@ -509,7 +509,7 @@ def build_diff_parser(parser_ctor=argparse.ArgumentParser):
         Examples:|n
         - Compare two projects, consider bboxes matching if their IoU > 0.7,|n
         |s|s|s|sprint results to Tensorboard:
-        |s|sdiff path/to/other/project -o diff/ -f tensorboard --iou-thresh 0.7
+        |s|sdiff path/to/other/project -o diff/ -v tensorboard --iou-thresh 0.7
         """,
         formatter_class=MultilineFormatter)
 
@@ -517,7 +517,7 @@ def build_diff_parser(parser_ctor=argparse.ArgumentParser):
         help="Directory of the second project to be compared")
     parser.add_argument('-o', '--output-dir', dest='dst_dir', default=None,
         help="Directory to save comparison results (default: do not save)")
-    parser.add_argument('-f', '--format',
+    parser.add_argument('-v', '--visualizer',
         default=DiffVisualizer.DEFAULT_FORMAT,
         choices=[f.name for f in DiffVisualizer.Format],
         help="Output format (default: %(default)s)")
@@ -537,14 +537,7 @@ def diff_command(args):
     first_project = load_project(args.project_dir)
     second_project = load_project(args.other_project_dir)
 
-    # distance match
-    comparator = Comparator(
-        iou_threshold=args.iou_thresh,
-        conf_threshold=args.conf_thresh)
-
-    # exact match
-    print(compare_datasets(
-        first_project.make_dataset(), second_project.make_dataset()))
+    comparator = DistanceComparator(iou_threshold=args.iou_thresh)
 
     dst_dir = args.dst_dir
     if dst_dir:
@@ -562,7 +555,7 @@ def diff_command(args):
     dst_dir_existed = osp.exists(dst_dir)
     try:
         visualizer = DiffVisualizer(save_dir=dst_dir, comparator=comparator,
-            output_format=args.format)
+            output_format=args.visualizer)
         visualizer.save_dataset_diff(
             first_project.make_dataset(),
             second_project.make_dataset())

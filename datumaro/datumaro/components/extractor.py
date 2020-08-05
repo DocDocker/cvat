@@ -363,7 +363,7 @@ class _Shape(Annotation):
             attributes=attributes, group=group)
         if points is not None:
             points = [round(p, _COORDINATE_ROUNDING_DIGITS) for p in points]
-        self._points = points
+        self.points = points
 
         if label is not None:
             label = int(label)

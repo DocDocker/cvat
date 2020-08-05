@@ -6,6 +6,7 @@
 import logging as log
 from collections import OrderedDict
 from copy import deepcopy
+from unittest import TestCase
 
 import attr
 import cv2
@@ -13,13 +14,12 @@ import numpy as np
 from attr import attrib, attrs
 
 from datumaro.components.cli_plugin import CliPlugin
-from datumaro.components.extractor import (AnnotationType, Bbox, Label,
-    LabelCategories)
+from datumaro.components.extractor import (AnnotationType,
+    Bbox, Label, LabelCategories)
 from datumaro.components.project import Dataset
 from datumaro.util import ensure_cls, find
 from datumaro.util.annotation_util import (OKS, bbox_iou, find_instances,
     max_bbox, mean_bbox, segment_iou)
-from datumaro.util.test_utils import ann_to_str
 
 
 def get_ann_type(anns, t):
@@ -743,108 +743,6 @@ def match_segments(a_segms, b_segms, distance='iou', dist_thresh=1.0):
 
     return matches, mispred, a_unmatched, b_unmatched
 
-@attrs
-class DistanceDatasetMatcher:
-    iou_threshold = attrib(converter=float, default=0.5)
-
-    @staticmethod
-    def match_datasets(a, b):
-        a_items = set((item.id, item.subset) for item in a)
-        b_items = set((item.id, item.subset) for item in b)
-
-        matches = a_items & b_items
-        a_unmatched = a_items - b_items
-        b_unmatched = b_items - a_items
-        return matches, a_unmatched, b_unmatched
-
-    @staticmethod
-    def match_classes(a, b):
-        a_label_cat = a.categories().get(AnnotationType.label, LabelCategories())
-        b_label_cat = b.categories().get(AnnotationType.label, LabelCategories())
-
-        a_labels = set(c.name for c in a_label_cat)
-        b_labels = set(c.name for c in b_label_cat)
-
-        matches = a_labels & b_labels
-        a_unmatched = a_labels - b_labels
-        b_unmatched = b_labels - a_labels
-        return matches, a_unmatched, b_unmatched
-
-    def match_annotations(self, item_a, item_b):
-        return { t: self._match_ann_type(t, item_a, item_b) }
-
-    def _match_ann_type(self, t, *args):
-        if t == AnnotationType.label:
-            return self.match_labels(*args)
-        elif t == AnnotationType.bbox:
-            return self.match_boxes(*args)
-        elif t == AnnotationType.polygon:
-            return self.match_polygons(*args)
-        elif t == AnnotationType.mask:
-            return self.match_masks(*args)
-        elif t == AnnotationType.points:
-            return self.match_points(*args)
-        elif t == AnnotationType.polyline:
-            return self.match_lines(*args)
-        else:
-            raise NotImplementedError("Unexpected annotation type %s" % t)
-
-    @staticmethod
-    def _get_ann_type(t, item):
-        return get_ann_type(item.annotations, t)
-
-    def match_labels(self, item_a, item_b):
-        a_labels = set(a.label for a in
-            self._get_ann_type(AnnotationType.label, item_a))
-        b_labels = set(a.label for a in
-            self._get_ann_type(AnnotationType.label, item_b))
-
-        matches = a_labels & b_labels
-        a_unmatched = a_labels - b_labels
-        b_unmatched = b_labels - a_labels
-        return matches, a_unmatched, b_unmatched
-
-    def _match_segments(self, t, item_a, item_b):
-        a_boxes = self._get_ann_type(t, item_a)
-        b_boxes = self._get_ann_type(t, item_b)
-        return match_segments(a_boxes, b_boxes, dist_thresh=self.iou_threshold)
-
-    def match_polygons(self, item_a, item_b):
-        return self._match_segments(AnnotationType.polygon, item_a, item_b)
-
-    def match_masks(self, item_a, item_b):
-        return self._match_segments(AnnotationType.mask, item_a, item_b)
-
-    def match_boxes(self, item_a, item_b):
-        return self._match_segments(AnnotationType.bbox, item_a, item_b)
-
-    def match_points(self, item_a, item_b):
-        a_points = self._get_ann_type(AnnotationType.points, item_a)
-        b_points = self._get_ann_type(AnnotationType.points, item_b)
-
-        instance_map = {}
-        for s in sources:
-            s_instances = find_instances(s)
-            for inst in s_instances:
-                inst_bbox = max_bbox(inst)
-                for ann in inst:
-                    instance_map[id(ann)] = [inst, inst_bbox]
-        matcher = PointsMatcher(instance_map=instance_map)
-        distance = lambda a, b: matcher.distance(a, b)
-
-        return match_segments(a_points, b_points,
-            dist_thresh=self.iou_threshold, distance=distance)
-
-    def match_lines(self, item_a, item_b):
-        a_lines = self._get_ann_type(AnnotationType.polyline, item_a)
-        b_lines = self._get_ann_type(AnnotationType.polyline, item_b)
-
-        matcher = LineMatcher()
-        distance = lambda a, b: matcher.distance(a, b)
-
-        return match_segments(a_lines, b_lines,
-            dist_thresh=self.iou_threshold, distance=distance)
-
 def mean_std(dataset):
     """
     Computes unbiased mean and std. dev. for dataset images, channel-wise.
@@ -1070,75 +968,230 @@ def compute_ann_statistics(dataset):
     return stats
 
 @attrs
-class ExactDatasetMatcher:
+class DistanceComparator:
+    iou_threshold = attrib(converter=float, default=0.5)
+
+    @staticmethod
+    def match_datasets(a, b):
+        a_items = set((item.id, item.subset) for item in a)
+        b_items = set((item.id, item.subset) for item in b)
+
+        matches = a_items & b_items
+        a_unmatched = a_items - b_items
+        b_unmatched = b_items - a_items
+        return matches, a_unmatched, b_unmatched
+
     @staticmethod
     def match_classes(a, b):
+        a_label_cat = a.categories().get(AnnotationType.label, LabelCategories())
+        b_label_cat = b.categories().get(AnnotationType.label, LabelCategories())
 
+        a_labels = set(c.name for c in a_label_cat)
+        b_labels = set(c.name for c in b_label_cat)
+
+        matches = a_labels & b_labels
+        a_unmatched = a_labels - b_labels
+        b_unmatched = b_labels - a_labels
+        return matches, a_unmatched, b_unmatched
+
+    def match_annotations(self, item_a, item_b):
+        return { t: self._match_ann_type(t, item_a, item_b) }
+
+    def _match_ann_type(self, t, *args):
+        if t == AnnotationType.label:
+            return self.match_labels(*args)
+        elif t == AnnotationType.bbox:
+            return self.match_boxes(*args)
+        elif t == AnnotationType.polygon:
+            return self.match_polygons(*args)
+        elif t == AnnotationType.mask:
+            return self.match_masks(*args)
+        elif t == AnnotationType.points:
+            return self.match_points(*args)
+        elif t == AnnotationType.polyline:
+            return self.match_lines(*args)
+        else:
+            raise NotImplementedError("Unexpected annotation type %s" % t)
+
+    @staticmethod
+    def _get_ann_type(t, item):
+        return get_ann_type(item.annotations, t)
+
+    def match_labels(self, item_a, item_b):
+        a_labels = set(a.label for a in
+            self._get_ann_type(AnnotationType.label, item_a))
+        b_labels = set(a.label for a in
+            self._get_ann_type(AnnotationType.label, item_b))
+
+        matches = a_labels & b_labels
+        a_unmatched = a_labels - b_labels
+        b_unmatched = b_labels - a_labels
+        return matches, a_unmatched, b_unmatched
+
+    def _match_segments(self, t, item_a, item_b):
+        a_boxes = self._get_ann_type(t, item_a)
+        b_boxes = self._get_ann_type(t, item_b)
+        return match_segments(a_boxes, b_boxes, dist_thresh=self.iou_threshold)
+
+    def match_polygons(self, item_a, item_b):
+        return self._match_segments(AnnotationType.polygon, item_a, item_b)
+
+    def match_masks(self, item_a, item_b):
+        return self._match_segments(AnnotationType.mask, item_a, item_b)
+
+    def match_boxes(self, item_a, item_b):
+        return self._match_segments(AnnotationType.bbox, item_a, item_b)
+
+    def match_points(self, item_a, item_b):
+        a_points = self._get_ann_type(AnnotationType.points, item_a)
+        b_points = self._get_ann_type(AnnotationType.points, item_b)
+
+        instance_map = {}
+        for s in sources:
+            s_instances = find_instances(s)
+            for inst in s_instances:
+                inst_bbox = max_bbox(inst)
+                for ann in inst:
+                    instance_map[id(ann)] = [inst, inst_bbox]
+        matcher = PointsMatcher(instance_map=instance_map)
+        distance = lambda a, b: matcher.distance(a, b)
+
+        return match_segments(a_points, b_points,
+            dist_thresh=self.iou_threshold, distance=distance)
+
+    def match_lines(self, item_a, item_b):
+        a_lines = self._get_ann_type(AnnotationType.polyline, item_a)
+        b_lines = self._get_ann_type(AnnotationType.polyline, item_b)
+
+        matcher = LineMatcher()
+        distance = lambda a, b: matcher.distance(a, b)
+
+        return match_segments(a_lines, b_lines,
+            dist_thresh=self.iou_threshold, distance=distance)
+
+
+@attrs
+class ExactComparator:
+    ignored_fields = attrib(kw_only=True, factory=set, converter=set)
+    ignored_attrs = attrib(kw_only=True, factory=set, converter=set)
+    ignored_item_attrs = attrib(kw_only=True, factory=set, converter=set)
+
+    _test = attrib(init=False, type=TestCase)
+
+    def __attrs_post_init__(self):
+        self._test = TestCase()
+        self._test.maxDiff = None
 
 
     @staticmethod
-    def match_categories(a, b):
-        test.assertEqual(
-            sorted(a, key=lambda t: t.value),
-            sorted(b, key=lambda t: t.value)
-        )
+    def match_datasets(a, b):
+        a_items = set((item.id, item.subset) for item in a)
+        b_items = set((item.id, item.subset) for item in b)
+
+        matches = a_items & b_items
+        a_unmatched = a_items - b_items
+        b_unmatched = b_items - a_items
+        return matches, a_unmatched, b_unmatched
+
+    def compare_categories(self, a, b):
+        test = self._test
+
+        errors = []
+        try:
+            test.assertEqual(
+                sorted(a, key=lambda t: t.value),
+                sorted(b, key=lambda t: t.value)
+            )
+        except AssertionError as e:
+            errors.append({'type': 'categories', 'message': str(e)})
 
         if AnnotationType.label in a:
-            test.assertEqual(
-                a[AnnotationType.label].items,
-                b[AnnotationType.label].items,
-            )
+            try:
+                test.assertEqual(
+                    a[AnnotationType.label].items,
+                    b[AnnotationType.label].items,
+                )
+            except AssertionError as e:
+                errors.append({'type': 'labels', 'message': str(e)})
         if AnnotationType.mask in a:
-            test.assertEqual(
-                a[AnnotationType.mask].colormap,
-                b[AnnotationType.mask].colormap,
-            )
+            try:
+                test.assertEqual(
+                    a[AnnotationType.mask].colormap,
+                    b[AnnotationType.mask].colormap,
+                )
+            except AssertionError as e:
+                errors.append({'type': 'colormap', 'message': str(e)})
         if AnnotationType.points in a:
-            test.assertEqual(
-                a[AnnotationType.points].items,
-                b[AnnotationType.points].items,
-            )
+            try:
+                test.assertEqual(
+                    a[AnnotationType.points].items,
+                    b[AnnotationType.points].items,
+                )
+            except AssertionError as e:
+                errors.append({'type': 'points', 'message': str(e)})
+        return errors
 
-    @staticmethod
-    def match_annotations(a, b, ignore_fields=None):
-        ignore_fields = ignore_fields or set()
+    def compare_annotations(self, a, b):
+        ignored_fields = self.ignored_fields
+        ignored_attrs = self.ignored_attrs
 
-        a_fields = { k: v for k, v in vars(a).items() if k not in ignore_fields }
-        b_fields = { k: v for k, v in vars(b).items() if k not in ignore_fields }
+        a_fields = { k: v for k, v in vars(a).items() if k not in ignored_fields }
+        b_fields = { k: v for k, v in vars(b).items() if k not in ignored_fields }
 
-        matches = []
+        a_fields['attributes'] = { k: v for k, v in a_fields['attributes'].items()
+            if k not in ignored_attrs }
+        b_fields['attributes'] = { k: v for k, v in b_fields['attributes'].items()
+            if k not in ignored_attrs }
 
-    @staticmethod
-    def compare_annotations(a, b, ignore_fields=None):
+        result = a_fields == b_fields
 
+        return result
 
-        return a_fields == b_fields
+    def compare_datasets(self, a, b):
+        test = self._test
 
-    @staticmethod
-    def compare_datasets(a, b):
-        compare_categories(a.categories(), b.categories())
+        errors = []
 
-        test.assertEqual(sorted(a.subsets()), sorted(b.subsets()))
-        test.assertEqual(len(a), len(b))
-        for item_a in a:
-            item_b = find(b, lambda x: x.id == item_a.id and x.subset == item_a.subset)
-            test.assertFalse(item_b is None, item_a.id)
-            test.assertEqual(item_a.attributes, item_b.attributes)
-            test.assertEqual(len(item_a.annotations), len(item_b.annotations))
+        errors.append(self.compare_categories(a.categories(), b.categories()))
+
+        matched = []
+        unmatched = []
+
+        items, a_extra_items, b_extra_items = self.match_datasets(a, b)
+        for item_id in items:
+            item_a = a.get(*item_id)
+            item_b = b.get(*item_id)
+
+            try:
+                test.assertEqual(
+                    { k: v for k, v in item_a.attributes.items()
+                        if k not in self.ignored_item_attrs},
+                    { k: v for k, v in item_b.attributes.items()
+                        if k not in self.ignored_item_attrs}
+                )
+            except AssertionError as e:
+                errors.append({'type': 'item_attr',
+                    'item': item_id, 'message': str(e)})
+
+            b_annotations = item_b.annotations[:]
             for ann_a in item_a.annotations:
-                # We might find few corresponding items, so check them all
-                ann_b_matches = [x for x in item_b.annotations
+                ann_b_candidates = [x for x in item_b.annotations
                     if x.type == ann_a.type]
-                if not ann_b_matches:
-                    print("can't find matches for", ann_a.id)
 
-                ann_b = find(ann_b_matches,
-                    lambda x: compare_annotations(ann_a, x,
-                        ignore_fields={'id', 'group'}))
+                ann_b = find(enumerate(self.compare_annotations(ann_a, x)
+                    for x in ann_b_candidates), lambda x: x[1])
                 if ann_b is None:
-                    print("can't find matches for", ann_a.id, ann_to_str(ann_a))
-                    print([ann_to_str(b) for b in ann_b_matches])
+                    unmatched.append({
+                        'item': item_id, 'source': 'a', 'ann': str(ann_a),
+                    })
                     continue
                 else:
-                    print('match:', ann_to_str(ann_a), ann_to_str(ann_b))
-                item_b.annotations.remove(ann_b) # avoid repeats
+                    ann_b = ann_b_candidates[ann_b[0]]
+
+                b_annotations.remove(ann_b) # avoid repeats
+                matched.append({'item': item_id, 'a': str(ann_a), 'b': str(ann_b)})
+
+            for ann_b in b_annotations:
+                unmatched.append({'item': item_id, 'source': 'b', 'ann': str(ann_b)})
+
+        return matched, unmatched, a_extra_items, b_extra_items, errors
