@@ -504,10 +504,10 @@ def merge_command(args):
 def build_diff_parser(parser_ctor=argparse.ArgumentParser):
     parser = parser_ctor(help="Compare projects",
         description="""
-        Compares two projects.|n
+        Compares two projects, match annotations by distance.|n
         |n
         Examples:|n
-        - Compare two projects, consider bboxes matching if their IoU > 0.7,|n
+        - Compare two projects, match boxes if IoU > 0.7,|n
         |s|s|s|sprint results to Tensorboard:
         |s|sdiff path/to/other/project -o diff/ -v tensorboard --iou-thresh 0.7
         """,
@@ -563,6 +563,69 @@ def diff_command(args):
         if not dst_dir_existed and osp.isdir(dst_dir):
             shutil.rmtree(dst_dir, ignore_errors=True)
         raise
+
+    return 0
+
+def build_diff2_parser(parser_ctor=argparse.ArgumentParser):
+    parser = parser_ctor(help="Compare projects",
+        description="""
+        Compares two projects for exact equality.|n
+        |n
+        Examples:|n
+        - Compare two projects, exclude annotation group |n
+        |s|s|sand the 'is_crowd' attribute from comparison:|n
+        |s|sdiff2 other/project/ -if group -ia is_crowd
+        """,
+        formatter_class=MultilineFormatter)
+
+    parser.add_argument('other_project_dir',
+        help="Directory of the second project to be compared")
+    parser.add_argument('-iia', '--ignore-item-attr', action='append',
+        help="Ignore an item attribute (repeatable)")
+    parser.add_argument('-ia', '--ignore-attr', action='append',
+        help="Ignore an annotation attribute (repeatable)")
+    parser.add_argument('-if', '--ignore-field', action='append',
+        help="Ignore an annotation field (repeatable)")
+    parser.add_argument('--all', action='store_true',
+        help="Include matches in the output")
+    parser.add_argument('-p', '--project', dest='project_dir', default='.',
+        help="Directory of the first project to be compared (default: current dir)")
+    parser.set_defaults(command=diff2_command)
+
+    return parser
+
+def diff2_command(args):
+    first_project = load_project(args.project_dir)
+    second_project = load_project(args.other_project_dir)
+
+    comparator = ExactComparator(
+        ignored_fields=args.ignore_field or [],
+        ignored_attrs=args.ignore_attr or [],
+        ignored_item_attrs=args.ignore_item_attr or [])
+    matches, mismatches, a_extra, b_extra, errors = \
+        comparator.compare_datasets(
+            first_project.make_dataset(), second_project.make_dataset())
+    output = {
+        "mismatches": mismatches,
+        "a_extra_items": sorted(a_extra),
+        "b_extra_items": sorted(b_extra),
+        "errors": errors,
+    }
+    if args.all:
+        output["matches"] = matches
+
+    output_file = generate_next_file_name('diff', ext='.json')
+    with open(output_file, 'w') as f:
+        json.dump(output, f, indent=4, sort_keys=True)
+
+    print("Found:")
+    print("The first project has %s unmatched items" % len(a_extra))
+    print("The second project has %s unmatched items" % len(b_extra))
+    print("%s item conflicts" % len(errors))
+    print("%s matching annotations" % len(matches))
+    print("%s mismatching annotations" % len(mismatches))
+
+    log.info("Output has been saved to '%s'" % output_file)
 
     return 0
 
@@ -752,6 +815,7 @@ def build_parser(parser_ctor=argparse.ArgumentParser):
     add_subparser(subparsers, 'extract', build_extract_parser)
     add_subparser(subparsers, 'merge', build_merge_parser)
     add_subparser(subparsers, 'diff', build_diff_parser)
+    add_subparser(subparsers, 'diff2', build_diff2_parser)
     add_subparser(subparsers, 'transform', build_transform_parser)
     add_subparser(subparsers, 'info', build_info_parser)
     add_subparser(subparsers, 'stats', build_stats_parser)
