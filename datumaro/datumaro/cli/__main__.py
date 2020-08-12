@@ -68,7 +68,6 @@ def make_parser():
         ('remove', commands.remove, "Remove source from project"),
         ('export', commands.export, "Export project"),
         ('explain', commands.explain, "Run Explainable AI algorithm for model"),
-        ('quality', commands.quality, "Estimate dataset quality"),
         ('merge', commands.merge, "Merge datasets"),
         ('convert', commands.convert, "Convert dataset"),
     ]
