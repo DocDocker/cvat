@@ -14,8 +14,8 @@ from enum import Enum
 from datumaro.components.cli_plugin import CliPlugin
 from datumaro.components.dataset_filter import DatasetItemEncoder
 from datumaro.components.extractor import AnnotationType
-from datumaro.components.operations import (DistanceComparator, ExactComparator,
-    compute_ann_statistics, compute_image_statistics, mean_std)
+from datumaro.components.operations import (DistanceComparator,
+    ExactComparator, compute_ann_statistics, compute_image_statistics, mean_std)
 from datumaro.components.project import \
     PROJECT_DEFAULT_CONFIG as DEFAULT_CONFIG
 from datumaro.components.project import Environment, Project

@@ -3,6 +3,7 @@
   - [Windows 10](#windows-10)
   - [Mac OS Mojave](#mac-os-mojave)
   - [Advanced topics](#advanced-topics)
+    - [Deploying CVAT behind a proxy](#deploying-cvat-behind-a-proxy)
     - [Additional components](#additional-components)
     - [Semi-automatic and automatic annotation](#semi-automatic-and-automatic-annotation)
     - [Stop all containers](#stop-all-containers)
@@ -245,6 +246,28 @@ server. Proxy is an advanced topic and it is not covered by the guide.
 
 ## Advanced topics
 
+### Deploying CVAT behind a proxy
+If you deploy CVAT behind a proxy and do not plan to use any of [serverless functions](#semi-automatic-and-automatic-annotation)
+for automatic annotation, the exported environment variables
+`http_proxy`, `https_proxy` and `no_proxy` should be enough to build images.
+Otherwise please create or edit the file `~/.docker/config.json` in the home directory of the user
+which starts containers and add JSON such as the following:
+```json
+{
+ "proxies":
+ {
+   "default":
+   {
+     "httpProxy": "http://proxy_server:port",
+     "httpsProxy": "http://proxy_server:port",
+     "noProxy": "*.test.example.com,.example2.com"
+   }
+ }
+}
+```
+These environment variables are set automatically within any container.
+Please see the [Docker documentation](https://docs.docker.com/network/proxy/) for more details.
+
 ### Additional components
 
 - [Analytics: management and monitoring of data annotation team](/components/analytics/README.md)
@@ -270,28 +293,18 @@ nuctl create project cvat
 ```bash
 nuctl deploy --project-name cvat \
     --path serverless/openvino/dextr/nuclio \
-    --volume `pwd`/serverless/openvino/common:/opt/nuclio/common
+    --volume `pwd`/serverless/openvino/common:/opt/nuclio/common \
+    --platform local
 ```
 
 ```bash
 nuctl deploy --project-name cvat \
     --path serverless/openvino/omz/public/yolo-v3-tf/nuclio \
-    --volume `pwd`/serverless/openvino/common:/opt/nuclio/common
+    --volume `pwd`/serverless/openvino/common:/opt/nuclio/common \
+    --platform local
 ```
 
 Note: see [deploy.sh](/serverless/deploy.sh) script for more examples.
-
-List of DL models as serverless functions:
-
-- [Deep Extreme Cut (OpenVINO)](/serverless/openvino/dextr/nuclio)
-- [Faster RCNN (TensorFlow)](/serverless/tensorflow/faster_rcnn_inception_v2_coco/nuclio)
-- [Mask RCNN (OpenVINO)](/serverless/openvino/omz/public/mask_rcnn_inception_resnet_v2_atrous_coco/nuclio)
-- [YOLO v3 (OpenVINO)](/serverless/openvino/omz/public/yolo-v3-tf/nuclio)
-- [Faster RCNN (OpenVINO)](/serverless/openvino/omz/public/faster_rcnn_inception_v2_coco/nuclio)
-- [Text detection v4 (OpenVINO)](/serverless/openvino/omz/intel/text-detection-0004/nuclio)
-- [Semantic segmentation for ADAS (OpenVINO)](/serverless/openvino/omz/intel/semantic-segmentation-adas-0001/nuclio)
-- [Mask RCNN (TensorFlow)](/serverless/tensorflow/matterport/mask_rcnn/nuclio)
-- [Person ReID (OpenVINO)](/serverless/openvino/omz/intel/person-reidentification-retail-300/nuclio)
 
 ### Stop all containers
 
