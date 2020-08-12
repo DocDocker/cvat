@@ -1,7 +1,10 @@
-from unittest import TestCase
+import numpy as np
 
-from datumaro.components.extractor import DatasetItem, Label, Bbox
+from datumaro.components.extractor import DatasetItem, Label, Bbox, Caption, Mask, Points
+from datumaro.components.project import Dataset
 from datumaro.components.operations import DistanceComparator, ExactComparator
+
+from unittest import TestCase
 
 
 class DistanceComparatorTest(TestCase):
@@ -109,60 +112,66 @@ class DistanceComparatorTest(TestCase):
         self.assertEqual(2, len(b_greater))
         self.assertEqual(1, len(matches))
 
-# class ExactComparatorTest(TestCase):
-#     def test_
+class ExactComparatorTest(TestCase):
+    def test_class_comparison(self):
+        a = Dataset.from_iterable([], categories=['a', 'b', 'c'])
+        b = Dataset.from_iterable([], categories=['b', 'c'])
 
+        comp = ExactComparator()
+        _, _, _, _, errors = comp.compare_datasets(a, b)
 
+        self.assertEqual(1, len(errors), errors)
 
+    def test_item_comparison(self):
+        a = Dataset.from_iterable([
+            DatasetItem(id=1, subset='train'),
+            DatasetItem(id=2, subset='test', attributes={'x': 1}),
+        ], categories=['a', 'b', 'c'])
 
+        b = Dataset.from_iterable([
+            DatasetItem(id=2, subset='test'),
+            DatasetItem(id=3),
+        ], categories=['a', 'b', 'c'])
 
-#         label_categories = LabelCategories()
-#         for i in range(5):
-#             label_categories.add('cat' + str(i))
+        comp = ExactComparator()
+        _, _, a_extra_items, b_extra_items, errors = comp.compare_datasets(a, b)
 
-#         mask_categories = MaskCategories(
-#             generate_colormap(len(label_categories.items)))
+        self.assertEqual({('1', 'train')}, a_extra_items)
+        self.assertEqual({('3', '')}, b_extra_items)
+        self.assertEqual(1, len(errors), errors)
 
-#         points_categories = PointsCategories()
-#         for index, _ in enumerate(label_categories.items):
-#             points_categories.add(index, ['cat1', 'cat2'], joints=[[0, 1]])
+    def test_annotation_comparison(self):
+        a = Dataset.from_iterable([
+            DatasetItem(id=1, annotations=[
+                Caption('hello'), # unmatched
+                Caption('world', group=5),
+                Label(2, attributes={ 'x': 1, 'y': '2', }),
+                Bbox(1, 2, 3, 4, label=4, z_order=1, attributes={
+                    'score': 1.0,
+                }),
+                Bbox(5, 6, 7, 8, group=5),
+                Points([1, 2, 2, 0, 1, 1], label=0, z_order=4),
+                Mask(label=3, z_order=2, image=np.ones((2, 3))),
+            ]),
+        ], categories=['a', 'b', 'c', 'd'])
 
-#         return Dataset.from_iterable([
-#             DatasetItem(id=100, subset='train', image=np.ones((10, 6, 3)),
-#                 annotations=[
-#                     Caption('hello', id=1),
-#                     Caption('world', id=2, group=5),
-#                     Label(2, id=3, attributes={
-#                         'x': 1,
-#                         'y': '2',
-#                     }),
-#                     Bbox(1, 2, 3, 4, label=4, id=4, z_order=1, attributes={
-#                         'score': 1.0,
-#                     }),
-#                     Bbox(5, 6, 7, 8, id=5, group=5),
-#                     Points([1, 2, 2, 0, 1, 1], label=0, id=5, z_order=4),
-#                     Mask(label=3, id=5, z_order=2, image=np.ones((2, 3))),
-#                 ]),
-#             DatasetItem(id=21, subset='train',
-#                 annotations=[
-#                     Caption('test'),
-#                     Label(2),
-#                     Bbox(1, 2, 3, 4, label=5, id=42, group=42)
-#                 ]),
+        b = Dataset.from_iterable([
+            DatasetItem(id=1, annotations=[
+                Caption('world', group=5),
+                Label(2, attributes={ 'x': 1, 'y': '2', }),
+                Bbox(1, 2, 3, 4, label=4, z_order=1, attributes={
+                    'score': 1.0,
+                }),
+                Bbox(5, 6, 7, 8, group=5),
+                Bbox(5, 6, 7, 8, group=5), # unmatched
+                Points([1, 2, 2, 0, 1, 1], label=0, z_order=4),
+                Mask(label=3, z_order=2, image=np.ones((2, 3))),
+            ]),
+        ], categories=['a', 'b', 'c', 'd'])
 
-#             DatasetItem(id=2, subset='val',
-#                 annotations=[
-#                     PolyLine([1, 2, 3, 4, 5, 6, 7, 8], id=11, z_order=1),
-#                     Polygon([1, 2, 3, 4, 5, 6, 7, 8], id=12, z_order=4),
-#                 ]),
+        comp = ExactComparator()
+        matched, unmatched, _, _, errors = comp.compare_datasets(a, b)
 
-#             DatasetItem(id=42, subset='test',
-#                 attributes={'a1': 5, 'a2': '42'}),
-
-#             DatasetItem(id=42),
-#             DatasetItem(id=43, image=Image(path='1/b/c.qq', size=(2, 4))),
-#         ], categories={
-#             AnnotationType.label: label_categories,
-#             AnnotationType.mask: mask_categories,
-#             AnnotationType.points: points_categories,
-#         })
+        self.assertEqual(6, len(matched), matched)
+        self.assertEqual(2, len(unmatched), unmatched)
+        self.assertEqual(0, len(errors), errors)

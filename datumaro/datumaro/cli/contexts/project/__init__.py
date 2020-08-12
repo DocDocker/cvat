@@ -566,15 +566,15 @@ def diff_command(args):
 
     return 0
 
-def build_diff2_parser(parser_ctor=argparse.ArgumentParser):
-    parser = parser_ctor(help="Compare projects",
+def build_ediff_parser(parser_ctor=argparse.ArgumentParser):
+    parser = parser_ctor(help="Compare projects for equality",
         description="""
-        Compares two projects for exact equality.|n
+        Compares two projects for equality.|n
         |n
         Examples:|n
         - Compare two projects, exclude annotation group |n
         |s|s|sand the 'is_crowd' attribute from comparison:|n
-        |s|sdiff2 other/project/ -if group -ia is_crowd
+        |s|sediff other/project/ -if group -ia is_crowd
         """,
         formatter_class=MultilineFormatter)
 
@@ -584,17 +584,18 @@ def build_diff2_parser(parser_ctor=argparse.ArgumentParser):
         help="Ignore an item attribute (repeatable)")
     parser.add_argument('-ia', '--ignore-attr', action='append',
         help="Ignore an annotation attribute (repeatable)")
-    parser.add_argument('-if', '--ignore-field', action='append',
-        help="Ignore an annotation field (repeatable)")
+    parser.add_argument('-if', '--ignore-field',
+        action='append', default=['id', 'group'],
+        help="Ignore an annotation field (repeatable, default: %(default)s)")
     parser.add_argument('--all', action='store_true',
         help="Include matches in the output")
     parser.add_argument('-p', '--project', dest='project_dir', default='.',
         help="Directory of the first project to be compared (default: current dir)")
-    parser.set_defaults(command=diff2_command)
+    parser.set_defaults(command=ediff_command)
 
     return parser
 
-def diff2_command(args):
+def ediff_command(args):
     first_project = load_project(args.project_dir)
     second_project = load_project(args.other_project_dir)
 
@@ -815,7 +816,7 @@ def build_parser(parser_ctor=argparse.ArgumentParser):
     add_subparser(subparsers, 'extract', build_extract_parser)
     add_subparser(subparsers, 'merge', build_merge_parser)
     add_subparser(subparsers, 'diff', build_diff_parser)
-    add_subparser(subparsers, 'diff2', build_diff2_parser)
+    add_subparser(subparsers, 'ediff', build_ediff_parser)
     add_subparser(subparsers, 'transform', build_transform_parser)
     add_subparser(subparsers, 'info', build_info_parser)
     add_subparser(subparsers, 'stats', build_stats_parser)

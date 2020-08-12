@@ -96,3 +96,6 @@ def ensure_cls(c):
         else:
             return c(**arg)
     return converter
+
+def filter_dict(d, exclude_keys):
+    return { k: v for k, v in d.items() if k not in exclude_keys }

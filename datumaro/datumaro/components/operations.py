@@ -17,7 +17,7 @@ from datumaro.components.cli_plugin import CliPlugin
 from datumaro.components.extractor import (AnnotationType, Bbox, Label,
     LabelCategories)
 from datumaro.components.project import Dataset
-from datumaro.util import find, ensure_cls
+from datumaro.util import find, ensure_cls, filter_dict
 from datumaro.util.annotation_util import (segment_iou, bbox_iou,
     mean_bbox, OKS, find_instances, max_bbox, smooth_line)
 
@@ -1049,7 +1049,7 @@ class ExactComparator:
 
 
     @staticmethod
-    def match_datasets(a, b):
+    def _match_datasets(a, b):
         a_items = set((item.id, item.subset) for item in a)
         b_items = set((item.id, item.subset) for item in b)
 
@@ -1058,7 +1058,7 @@ class ExactComparator:
         b_unmatched = b_items - a_items
         return matches, a_unmatched, b_unmatched
 
-    def compare_categories(self, a, b):
+    def _compare_categories(self, a, b):
         test = self._test
 
         errors = []
@@ -1096,19 +1096,17 @@ class ExactComparator:
                 errors.append({'type': 'points', 'message': str(e)})
         return errors
 
-    def compare_annotations(self, a, b):
+    def _compare_annotations(self, a, b):
         ignored_fields = self.ignored_fields
         ignored_attrs = self.ignored_attrs
 
-        a_fields = { k: v for k, v in vars(a).items() if k not in ignored_fields }
-        b_fields = { k: v for k, v in vars(b).items() if k not in ignored_fields }
+        a_fields = { k: None for k in vars(a) if k in ignored_fields}
+        b_fields = { k: None for k in vars(b) if k in ignored_fields}
+        if 'attributes' not in ignored_fields:
+            a_fields['attributes'] = filter_dict(a.attributes, ignored_attrs)
+            b_fields['attributes'] = filter_dict(b.attributes, ignored_attrs)
 
-        a_fields['attributes'] = { k: v for k, v in a_fields['attributes'].items()
-            if k not in ignored_attrs }
-        b_fields['attributes'] = { k: v for k, v in b_fields['attributes'].items()
-            if k not in ignored_attrs }
-
-        result = a_fields == b_fields
+        result = a.wrap(**a_fields) == b.wrap(**b_fields)
 
         return result
 
@@ -1117,22 +1115,25 @@ class ExactComparator:
 
         errors = []
 
-        errors.append(self.compare_categories(a.categories(), b.categories()))
+        errors.extend(self._compare_categories(a.categories(), b.categories()))
 
         matched = []
         unmatched = []
 
-        items, a_extra_items, b_extra_items = self.match_datasets(a, b)
+        items, a_extra_items, b_extra_items = self._match_datasets(a, b)
+
+        if a.categories().get(AnnotationType.label) != \
+           b.categories().get(AnnotationType.label):
+            return matched, unmatched, a_extra_items, b_extra_items, errors
+
         for item_id in items:
             item_a = a.get(*item_id)
             item_b = b.get(*item_id)
 
             try:
                 test.assertEqual(
-                    { k: v for k, v in item_a.attributes.items()
-                        if k not in self.ignored_item_attrs },
-                    { k: v for k, v in item_b.attributes.items()
-                        if k not in self.ignored_item_attrs }
+                    filter_dict(item_a.attributes, self.ignored_item_attrs),
+                    filter_dict(item_b.attributes, self.ignored_item_attrs)
                 )
             except AssertionError as e:
                 errors.append({'type': 'item_attr',
@@ -1143,7 +1144,7 @@ class ExactComparator:
                 ann_b_candidates = [x for x in item_b.annotations
                     if x.type == ann_a.type]
 
-                ann_b = find(enumerate(self.compare_annotations(ann_a, x)
+                ann_b = find(enumerate(self._compare_annotations(ann_a, x)
                     for x in ann_b_candidates), lambda x: x[1])
                 if ann_b is None:
                     unmatched.append({
