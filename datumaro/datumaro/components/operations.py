@@ -1069,7 +1069,6 @@ class DistanceComparator:
         return match_segments(a_lines, b_lines,
             dist_thresh=self.iou_threshold, distance=distance)
 
-
 @attrs
 class ExactComparator:
     ignored_fields = attrib(kw_only=True, factory=set, converter=set)
@@ -1165,9 +1164,9 @@ class ExactComparator:
             try:
                 test.assertEqual(
                     { k: v for k, v in item_a.attributes.items()
-                        if k not in self.ignored_item_attrs},
+                        if k not in self.ignored_item_attrs },
                     { k: v for k, v in item_b.attributes.items()
-                        if k not in self.ignored_item_attrs}
+                        if k not in self.ignored_item_attrs }
                 )
             except AssertionError as e:
                 errors.append({'type': 'item_attr',
